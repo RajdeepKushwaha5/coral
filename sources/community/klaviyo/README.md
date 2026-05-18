@@ -91,27 +91,31 @@ ORDER BY send_time DESC;
 
 ## Cross-Source JOIN Example
 
-Klaviyo lists alongside Shopify order counts — audience size versus purchase volume (requires `shopify` source installed):
+Campaign send volume versus support ticket volume by day — detect whether email campaigns correlate with support spikes (requires `freshdesk` source installed):
 
 ```sql
-WITH list_summary AS (
-    SELECT id AS list_id, name AS list_name
-    FROM klaviyo.lists
+WITH campaign_days AS (
+    SELECT
+        SUBSTR(send_time, 1, 10) AS day,
+        COUNT(*)                 AS campaigns_sent
+    FROM klaviyo.campaigns
+    WHERE status = 'Sent'
+    GROUP BY SUBSTR(send_time, 1, 10)
+),
+ticket_days AS (
+    SELECT
+        SUBSTR(created_at, 1, 10) AS day,
+        COUNT(*)                  AS tickets_opened
+    FROM freshdesk.tickets
+    GROUP BY SUBSTR(created_at, 1, 10)
 )
 SELECT
-    l.list_name,
-    l.list_id
-FROM list_summary l
-ORDER BY l.list_name ASC;
-```
-
-Klaviyo metrics from Shopify — e-commerce conversion events:
-
-```sql
-SELECT id, name, integration_name, created
-FROM klaviyo.metrics
-WHERE integration_name = 'Shopify'
-ORDER BY name ASC;
+    COALESCE(c.day, t.day)        AS date,
+    COALESCE(c.campaigns_sent, 0) AS campaigns_sent,
+    COALESCE(t.tickets_opened, 0) AS tickets_opened
+FROM campaign_days c
+FULL OUTER JOIN ticket_days t ON t.day = c.day
+ORDER BY date DESC;
 ```
 
 ## Status Reference
