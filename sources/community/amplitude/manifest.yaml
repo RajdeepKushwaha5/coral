@@ -1,0 +1,345 @@
+name: amplitude
+version: 1.0.0
+dsl_version: 3
+backend: http
+description: >-
+  Query Amplitude Analytics as SQL tables. Browse your full event catalog,
+  timeline annotations, and per-user activity logs. Join with GitHub, Linear,
+  or any other Coral source for cross-source product intelligence.
+
+base_url: https://amplitude.com/api
+
+inputs:
+  AMPLITUDE_API_KEY:
+    kind: secret
+    hint: |
+      Your Amplitude project API key.
+      Go to Settings → Projects → select your project → API key.
+      See https://www.docs.developers.amplitude.com/analytics/apis/dashboard-rest-api/
+  AMPLITUDE_SECRET_KEY:
+    kind: secret
+    hint: |
+      Your Amplitude project Secret key.
+      Go to Settings → Projects → select your project → Secret key.
+      Keep this safe — it is equivalent to a password.
+
+auth:
+  type: BasicAuth
+  username: "{{input.AMPLITUDE_API_KEY}}"
+  password: "{{input.AMPLITUDE_SECRET_KEY}}"
+
+rate_limit:
+  extra_statuses:
+    - 429
+  retry_after_header: Retry-After
+
+test_queries:
+  - SELECT name, totals FROM amplitude.events ORDER BY totals DESC LIMIT 1
+
+functions:
+  - name: user_activity
+    description: >-
+      Return all recorded events for a specific Amplitude user. Pass the
+      Amplitude user ID (numeric), a device ID prefixed with "device:", or
+      a user ID prefixed with "user:". Useful for debugging user journeys
+      or support investigations.
+    fetch_limit_default: 1000
+    args:
+      - name: user_id
+        required: true
+        bind:
+          arg: user
+    request:
+      method: GET
+      path: /2/useractivity
+      query:
+        - name: user
+          from: arg
+          key: user_id
+    response:
+      rows_path:
+        - userData
+        - events
+    pagination:
+      mode: none
+    columns:
+      - name: event_type
+        type: Utf8
+        nullable: false
+        description: Name of the event as tracked in Amplitude
+        expr:
+          kind: path
+          path:
+            - event_type
+      - name: client_event_time
+        type: Utf8
+        nullable: true
+        description: Client-side timestamp when the event was recorded (ISO 8601)
+        expr:
+          kind: path
+          path:
+            - client_event_time
+      - name: server_upload_time
+        type: Utf8
+        nullable: true
+        description: Server-side timestamp when Amplitude received the event (ISO 8601)
+        expr:
+          kind: path
+          path:
+            - server_upload_time
+      - name: event_id
+        type: Int64
+        nullable: true
+        description: Unique numeric event ID within the user's session
+        expr:
+          kind: path
+          path:
+            - event_id
+      - name: session_id
+        type: Int64
+        nullable: true
+        description: Session ID grouping related events together
+        expr:
+          kind: path
+          path:
+            - session_id
+      - name: amplitude_id
+        type: Int64
+        nullable: true
+        description: Amplitude-assigned numeric identifier for the user
+        expr:
+          kind: path
+          path:
+            - amplitude_id
+      - name: user_id
+        type: Utf8
+        nullable: true
+        description: Your application's user identifier
+        expr:
+          kind: path
+          path:
+            - user_id
+      - name: device_id
+        type: Utf8
+        nullable: true
+        description: Device identifier at event time
+        expr:
+          kind: path
+          path:
+            - device_id
+      - name: platform
+        type: Utf8
+        nullable: true
+        description: Platform (e.g. Web, iOS, Android)
+        expr:
+          kind: path
+          path:
+            - platform
+      - name: os_name
+        type: Utf8
+        nullable: true
+        description: Operating system name
+        expr:
+          kind: path
+          path:
+            - os_name
+      - name: device_type
+        type: Utf8
+        nullable: true
+        description: Device type or model
+        expr:
+          kind: path
+          path:
+            - device_type
+      - name: country
+        type: Utf8
+        nullable: true
+        description: Country derived from IP address
+        expr:
+          kind: path
+          path:
+            - country
+      - name: city
+        type: Utf8
+        nullable: true
+        description: City derived from IP address
+        expr:
+          kind: path
+          path:
+            - city
+      - name: ip_address
+        type: Utf8
+        nullable: true
+        description: IP address recorded at event time
+        expr:
+          kind: path
+          path:
+            - ip_address
+      - name: event_properties
+        type: Utf8
+        nullable: true
+        description: Raw event properties as a JSON object
+        expr:
+          kind: path
+          path:
+            - event_properties
+      - name: user_properties
+        type: Utf8
+        nullable: true
+        description: Raw user properties snapshot at event time as a JSON object
+        expr:
+          kind: path
+          path:
+            - user_properties
+
+tables:
+  - name: events
+    description: >-
+      All event types tracked in the Amplitude project. Returns one row per
+      event type with total occurrence counts, visibility flags, and category.
+      Use this table to discover event names before building funnels or
+      filtering user activity.
+    guide: |
+      No filters required. Returns all event types for the project.
+
+      Example:
+        SELECT name, totals, category
+        FROM amplitude.events
+        ORDER BY totals DESC
+        LIMIT 20
+    request:
+      method: GET
+      path: /3/events/list
+    response:
+      rows_path:
+        - data
+    pagination:
+      mode: none
+    columns:
+      - name: name
+        type: Utf8
+        nullable: false
+        description: Event type name as tracked in Amplitude
+        expr:
+          kind: path
+          path:
+            - name
+      - name: totals
+        type: Int64
+        nullable: true
+        description: Total number of times this event has been recorded
+        expr:
+          kind: path
+          path:
+            - totals
+      - name: totals_non_active
+        type: Int64
+        nullable: true
+        description: Occurrences not attributed to active users
+        expr:
+          kind: path
+          path:
+            - totals_non_active
+      - name: deleted
+        type: Boolean
+        nullable: true
+        description: True if the event type has been deleted from the project
+        expr:
+          kind: path
+          path:
+            - deleted
+      - name: hidden
+        type: Boolean
+        nullable: true
+        description: True if the event type is hidden from the Amplitude UI
+        expr:
+          kind: path
+          path:
+            - hidden
+      - name: in_waitroom
+        type: Boolean
+        nullable: true
+        description: True if the event is pending approval in the waitroom
+        expr:
+          kind: path
+          path:
+            - in_waitroom
+      - name: flow_hidden
+        type: Boolean
+        nullable: true
+        description: True if the event is hidden from user path and flow charts
+        expr:
+          kind: path
+          path:
+            - flow_hidden
+      - name: category
+        type: Utf8
+        nullable: true
+        description: Category assigned to the event type in Amplitude
+        expr:
+          kind: path
+          path:
+            - category
+
+  - name: annotations
+    description: >-
+      Timeline annotation markers for the Amplitude project. Each row is one
+      annotation with a date, label, and optional details. Useful for
+      correlating metric changes with known events such as deployments,
+      marketing campaigns, or incidents.
+    guide: |
+      No filters required. Returns all annotations for the project.
+
+      Example:
+        SELECT date, label, details
+        FROM amplitude.annotations
+        ORDER BY date DESC
+    request:
+      method: GET
+      path: /2/annotations
+    response:
+      rows_path:
+        - data
+    pagination:
+      mode: none
+    columns:
+      - name: id
+        type: Int64
+        nullable: false
+        description: Unique numeric annotation ID
+        expr:
+          kind: path
+          path:
+            - id
+      - name: date
+        type: Utf8
+        nullable: false
+        description: Date of the annotation (YYYY-MM-DD)
+        expr:
+          kind: path
+          path:
+            - date
+      - name: label
+        type: Utf8
+        nullable: false
+        description: Short title for the annotation
+        expr:
+          kind: path
+          path:
+            - label
+      - name: details
+        type: Utf8
+        nullable: true
+        description: Optional longer description of the annotation
+        expr:
+          kind: path
+          path:
+            - details
+      - name: chart_id
+        type: Utf8
+        nullable: true
+        description: Chart this annotation is scoped to, or null if project-wide
+        expr:
+          kind: path
+          path:
+            - chart_id
