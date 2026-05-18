@@ -1,0 +1,779 @@
+name: chargebee
+version: 1.0.0
+dsl_version: 3
+backend: http
+description: >-
+  Query Chargebee subscription billing data as SQL tables. Inspect
+  subscriptions, customers, invoices, and plans. Join with Freshdesk
+  tickets or Linear issues for customer health and churn intelligence.
+
+base_url: "https://{{input.CHARGEBEE_SITE}}.chargebee.com"
+
+inputs:
+  CHARGEBEE_SITE:
+    kind: variable
+    hint: |
+      Your Chargebee site name. If your Chargebee URL is
+      https://acme.chargebee.com, enter `acme`.
+      For a test site, enter `acme-test`.
+  CHARGEBEE_API_KEY:
+    kind: secret
+    hint: |
+      Your Chargebee API key. Find it in the Chargebee dashboard under
+      Settings → Configure Chargebee → API Keys & Webhooks.
+      Use a read-only key scoped to the resources you plan to query.
+      See https://apidocs.chargebee.com/docs/api/auth
+
+auth:
+  type: BasicAuth
+  username: "{{input.CHARGEBEE_API_KEY}}"
+  password: ""
+
+rate_limit:
+  extra_statuses:
+    - 429
+  retry_after_header: Retry-After
+
+test_queries:
+  - SELECT id, email FROM chargebee.customers LIMIT 1
+
+tables:
+  - name: subscriptions
+    description: >-
+      Chargebee subscriptions. Each row is one subscription with its status,
+      plan, MRR, billing cycle, and term dates. Use customer_id to join
+      with chargebee.customers and plan_id to join with chargebee.plans.
+    guide: |
+      No required filters. Returns all subscriptions in the site.
+
+      status values:
+        active        — currently active and billing
+        in_trial      — in a free trial period
+        non_renewing  — active but will not renew at term end
+        paused        — billing paused
+        cancelled     — subscription has been cancelled
+        future        — scheduled to start in the future
+
+      billing_period_unit values: day, week, month, year
+      mrr and plan amounts are in the smallest currency unit (e.g. cents for USD).
+
+      Example:
+        SELECT id, customer_id, plan_id, status, mrr, current_term_end
+        FROM chargebee.subscriptions
+        WHERE status = 'active'
+        ORDER BY mrr DESC
+        LIMIT 50
+    request:
+      method: GET
+      path: /api/v2/subscriptions
+    response:
+      rows_path:
+        - list
+    pagination:
+      mode: cursor_query
+      cursor_param: offset
+      response_cursor_path:
+        - next_offset
+      page_size:
+        default: 100
+        max: 100
+        query_param: limit
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Unique subscription ID
+        expr:
+          kind: path
+          path:
+            - subscription
+            - id
+      - name: customer_id
+        type: Utf8
+        nullable: false
+        description: ID of the customer this subscription belongs to
+        expr:
+          kind: path
+          path:
+            - subscription
+            - customer_id
+      - name: plan_id
+        type: Utf8
+        nullable: false
+        description: ID of the plan this subscription is on
+        expr:
+          kind: path
+          path:
+            - subscription
+            - plan_id
+      - name: status
+        type: Utf8
+        nullable: false
+        description: Subscription status (active, in_trial, non_renewing, paused, cancelled, future)
+        expr:
+          kind: path
+          path:
+            - subscription
+            - status
+      - name: currency_code
+        type: Utf8
+        nullable: true
+        description: Three-letter ISO currency code (e.g. USD)
+        expr:
+          kind: path
+          path:
+            - subscription
+            - currency_code
+      - name: mrr
+        type: Int64
+        nullable: true
+        description: Monthly Recurring Revenue in the smallest currency unit (e.g. cents)
+        expr:
+          kind: path
+          path:
+            - subscription
+            - mrr
+      - name: plan_quantity
+        type: Int64
+        nullable: true
+        description: Number of plan units subscribed
+        expr:
+          kind: path
+          path:
+            - subscription
+            - plan_quantity
+      - name: plan_unit_price
+        type: Int64
+        nullable: true
+        description: Per-unit plan price in the smallest currency unit
+        expr:
+          kind: path
+          path:
+            - subscription
+            - plan_unit_price
+      - name: plan_amount
+        type: Int64
+        nullable: true
+        description: Total plan amount (plan_quantity × plan_unit_price) in the smallest currency unit
+        expr:
+          kind: path
+          path:
+            - subscription
+            - plan_amount
+      - name: billing_period
+        type: Int64
+        nullable: true
+        description: Number of billing period units per billing cycle
+        expr:
+          kind: path
+          path:
+            - subscription
+            - billing_period
+      - name: billing_period_unit
+        type: Utf8
+        nullable: true
+        description: Billing period unit (day, week, month, year)
+        expr:
+          kind: path
+          path:
+            - subscription
+            - billing_period_unit
+      - name: current_term_start
+        type: Int64
+        nullable: true
+        description: Start of the current billing term as Unix epoch seconds
+        expr:
+          kind: path
+          path:
+            - subscription
+            - current_term_start
+      - name: current_term_end
+        type: Int64
+        nullable: true
+        description: End of the current billing term as Unix epoch seconds
+        expr:
+          kind: path
+          path:
+            - subscription
+            - current_term_end
+      - name: next_billing_at
+        type: Int64
+        nullable: true
+        description: Next billing date as Unix epoch seconds
+        expr:
+          kind: path
+          path:
+            - subscription
+            - next_billing_at
+      - name: trial_start
+        type: Int64
+        nullable: true
+        description: Trial period start as Unix epoch seconds (null if not in trial)
+        expr:
+          kind: path
+          path:
+            - subscription
+            - trial_start
+      - name: trial_end
+        type: Int64
+        nullable: true
+        description: Trial period end as Unix epoch seconds (null if not in trial)
+        expr:
+          kind: path
+          path:
+            - subscription
+            - trial_end
+      - name: started_at
+        type: Int64
+        nullable: true
+        description: Subscription start date as Unix epoch seconds
+        expr:
+          kind: path
+          path:
+            - subscription
+            - started_at
+      - name: activated_at
+        type: Int64
+        nullable: true
+        description: Date the subscription was first activated as Unix epoch seconds
+        expr:
+          kind: path
+          path:
+            - subscription
+            - activated_at
+      - name: cancelled_at
+        type: Int64
+        nullable: true
+        description: Cancellation date as Unix epoch seconds (null if not cancelled)
+        expr:
+          kind: path
+          path:
+            - subscription
+            - cancelled_at
+      - name: created_at
+        type: Int64
+        nullable: true
+        description: Subscription creation date as Unix epoch seconds
+        expr:
+          kind: path
+          path:
+            - subscription
+            - created_at
+      - name: updated_at
+        type: Int64
+        nullable: true
+        description: Last update date as Unix epoch seconds
+        expr:
+          kind: path
+          path:
+            - subscription
+            - updated_at
+
+  - name: customers
+    description: >-
+      Chargebee customers. Each row is one customer with contact details,
+      auto-collection setting, and MRR. Use id to join with
+      chargebee.subscriptions and chargebee.invoices.
+    guide: |
+      No required filters. Returns all customers in the site.
+
+      auto_collection values: on (automatic charging), off (manual collection)
+      taxability values: taxable, exempt
+      mrr is in the smallest currency unit (e.g. cents for USD).
+
+      Example:
+        SELECT id, email, company, mrr, currency_code
+        FROM chargebee.customers
+        WHERE mrr > 0
+        ORDER BY mrr DESC
+        LIMIT 50
+    request:
+      method: GET
+      path: /api/v2/customers
+    response:
+      rows_path:
+        - list
+    pagination:
+      mode: cursor_query
+      cursor_param: offset
+      response_cursor_path:
+        - next_offset
+      page_size:
+        default: 100
+        max: 100
+        query_param: limit
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Unique customer ID
+        expr:
+          kind: path
+          path:
+            - customer
+            - id
+      - name: first_name
+        type: Utf8
+        nullable: true
+        description: Customer first name
+        expr:
+          kind: path
+          path:
+            - customer
+            - first_name
+      - name: last_name
+        type: Utf8
+        nullable: true
+        description: Customer last name
+        expr:
+          kind: path
+          path:
+            - customer
+            - last_name
+      - name: email
+        type: Utf8
+        nullable: true
+        description: Customer email address
+        expr:
+          kind: path
+          path:
+            - customer
+            - email
+      - name: company
+        type: Utf8
+        nullable: true
+        description: Company name
+        expr:
+          kind: path
+          path:
+            - customer
+            - company
+      - name: phone
+        type: Utf8
+        nullable: true
+        description: Phone number
+        expr:
+          kind: path
+          path:
+            - customer
+            - phone
+      - name: auto_collection
+        type: Utf8
+        nullable: true
+        description: Auto-collection setting — on (automatic charging) or off (manual)
+        expr:
+          kind: path
+          path:
+            - customer
+            - auto_collection
+      - name: taxability
+        type: Utf8
+        nullable: true
+        description: Tax applicability — taxable or exempt
+        expr:
+          kind: path
+          path:
+            - customer
+            - taxability
+      - name: mrr
+        type: Int64
+        nullable: true
+        description: Customer MRR in the smallest currency unit (e.g. cents)
+        expr:
+          kind: path
+          path:
+            - customer
+            - mrr
+      - name: currency_code
+        type: Utf8
+        nullable: true
+        description: Three-letter ISO currency code (e.g. USD)
+        expr:
+          kind: path
+          path:
+            - customer
+            - currency_code
+      - name: created_at
+        type: Int64
+        nullable: true
+        description: Customer creation date as Unix epoch seconds
+        expr:
+          kind: path
+          path:
+            - customer
+            - created_at
+      - name: updated_at
+        type: Int64
+        nullable: true
+        description: Last update date as Unix epoch seconds
+        expr:
+          kind: path
+          path:
+            - customer
+            - updated_at
+
+  - name: invoices
+    description: >-
+      Chargebee invoices. Each row is one invoice with its status, amounts,
+      and payment timestamps. Use customer_id and subscription_id to join
+      with other chargebee tables.
+    guide: |
+      No required filters. Returns all invoices in the site, most recent first.
+
+      status values:
+        paid         — fully paid
+        payment_due  — payment is overdue
+        not_paid     — could not be collected
+        voided       — voided before payment
+        pending      — not yet finalized
+        posted       — finalized, awaiting payment
+
+      recurring = true means this invoice was generated for a subscription renewal.
+      All amount fields are in the smallest currency unit (e.g. cents for USD).
+      date, due_date, and paid_at are Unix epoch seconds.
+
+      Example:
+        SELECT id, customer_id, subscription_id, status, total, currency_code, paid_at
+        FROM chargebee.invoices
+        WHERE status = 'payment_due'
+        ORDER BY due_date ASC
+    request:
+      method: GET
+      path: /api/v2/invoices
+    response:
+      rows_path:
+        - list
+    pagination:
+      mode: cursor_query
+      cursor_param: offset
+      response_cursor_path:
+        - next_offset
+      page_size:
+        default: 100
+        max: 100
+        query_param: limit
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Unique invoice ID (e.g. 4gkYnd21ouvW-4)
+        expr:
+          kind: path
+          path:
+            - invoice
+            - id
+      - name: customer_id
+        type: Utf8
+        nullable: false
+        description: ID of the customer this invoice belongs to
+        expr:
+          kind: path
+          path:
+            - invoice
+            - customer_id
+      - name: subscription_id
+        type: Utf8
+        nullable: true
+        description: ID of the subscription this invoice was generated for (null for one-time invoices)
+        expr:
+          kind: path
+          path:
+            - invoice
+            - subscription_id
+      - name: status
+        type: Utf8
+        nullable: false
+        description: Invoice status (paid, payment_due, not_paid, voided, pending, posted)
+        expr:
+          kind: path
+          path:
+            - invoice
+            - status
+      - name: recurring
+        type: Boolean
+        nullable: true
+        description: True if this invoice was generated for a subscription renewal
+        expr:
+          kind: path
+          path:
+            - invoice
+            - recurring
+      - name: price_type
+        type: Utf8
+        nullable: true
+        description: Price type — tax_exclusive or tax_inclusive
+        expr:
+          kind: path
+          path:
+            - invoice
+            - price_type
+      - name: date
+        type: Int64
+        nullable: true
+        description: Invoice date as Unix epoch seconds
+        expr:
+          kind: path
+          path:
+            - invoice
+            - date
+      - name: due_date
+        type: Int64
+        nullable: true
+        description: Payment due date as Unix epoch seconds
+        expr:
+          kind: path
+          path:
+            - invoice
+            - due_date
+      - name: paid_at
+        type: Int64
+        nullable: true
+        description: Payment timestamp as Unix epoch seconds (null if unpaid)
+        expr:
+          kind: path
+          path:
+            - invoice
+            - paid_at
+      - name: total
+        type: Int64
+        nullable: true
+        description: Total invoice amount in the smallest currency unit (e.g. cents)
+        expr:
+          kind: path
+          path:
+            - invoice
+            - total
+      - name: amount_due
+        type: Int64
+        nullable: true
+        description: Amount still owed in the smallest currency unit
+        expr:
+          kind: path
+          path:
+            - invoice
+            - amount_due
+      - name: amount_paid
+        type: Int64
+        nullable: true
+        description: Amount already paid in the smallest currency unit
+        expr:
+          kind: path
+          path:
+            - invoice
+            - amount_paid
+      - name: credits_applied
+        type: Int64
+        nullable: true
+        description: Credits applied to this invoice in the smallest currency unit
+        expr:
+          kind: path
+          path:
+            - invoice
+            - credits_applied
+      - name: write_off_amount
+        type: Int64
+        nullable: true
+        description: Amount written off in the smallest currency unit
+        expr:
+          kind: path
+          path:
+            - invoice
+            - write_off_amount
+      - name: currency_code
+        type: Utf8
+        nullable: true
+        description: Three-letter ISO currency code (e.g. USD)
+        expr:
+          kind: path
+          path:
+            - invoice
+            - currency_code
+      - name: created_at
+        type: Int64
+        nullable: true
+        description: Invoice creation date as Unix epoch seconds
+        expr:
+          kind: path
+          path:
+            - invoice
+            - created_at
+      - name: updated_at
+        type: Int64
+        nullable: true
+        description: Last update date as Unix epoch seconds
+        expr:
+          kind: path
+          path:
+            - invoice
+            - updated_at
+
+  - name: plans
+    description: >-
+      Chargebee plans (Product Catalog v1). Each row is one plan with its
+      pricing, billing cycle, and trial configuration. Use plan_id from
+      chargebee.subscriptions to look up plan details.
+    guide: |
+      No required filters. Returns all plans in the site.
+
+      status values: active, archived
+      period_unit values: day, week, month, year
+      charge_model values: flat_fee, per_unit, tiered, volume, stairstep
+      price, and mrr are in the smallest currency unit (e.g. cents for USD).
+      billing_cycles = null means the subscription renews indefinitely.
+
+      Example:
+        SELECT id, name, price, period, period_unit, status
+        FROM chargebee.plans
+        WHERE status = 'active'
+        ORDER BY price DESC
+    request:
+      method: GET
+      path: /api/v2/plans
+    response:
+      rows_path:
+        - list
+    pagination:
+      mode: cursor_query
+      cursor_param: offset
+      response_cursor_path:
+        - next_offset
+      page_size:
+        default: 100
+        max: 100
+        query_param: limit
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Unique plan ID
+        expr:
+          kind: path
+          path:
+            - plan
+            - id
+      - name: name
+        type: Utf8
+        nullable: false
+        description: Plan display name
+        expr:
+          kind: path
+          path:
+            - plan
+            - name
+      - name: description
+        type: Utf8
+        nullable: true
+        description: Plan description
+        expr:
+          kind: path
+          path:
+            - plan
+            - description
+      - name: price
+        type: Int64
+        nullable: true
+        description: Plan price in the smallest currency unit (e.g. cents). 0 for free plans.
+        expr:
+          kind: path
+          path:
+            - plan
+            - price
+      - name: currency_code
+        type: Utf8
+        nullable: true
+        description: Three-letter ISO currency code (e.g. USD)
+        expr:
+          kind: path
+          path:
+            - plan
+            - currency_code
+      - name: period
+        type: Int64
+        nullable: true
+        description: Number of period units per billing cycle
+        expr:
+          kind: path
+          path:
+            - plan
+            - period
+      - name: period_unit
+        type: Utf8
+        nullable: true
+        description: Billing period unit (day, week, month, year)
+        expr:
+          kind: path
+          path:
+            - plan
+            - period_unit
+      - name: billing_cycles
+        type: Int64
+        nullable: true
+        description: Number of billing cycles before expiry. Null means indefinite renewal.
+        expr:
+          kind: path
+          path:
+            - plan
+            - billing_cycles
+      - name: trial_period
+        type: Int64
+        nullable: true
+        description: Trial period length. Null if no trial is configured.
+        expr:
+          kind: path
+          path:
+            - plan
+            - trial_period
+      - name: trial_period_unit
+        type: Utf8
+        nullable: true
+        description: Trial period unit (day, week, month). Null if no trial is configured.
+        expr:
+          kind: path
+          path:
+            - plan
+            - trial_period_unit
+      - name: charge_model
+        type: Utf8
+        nullable: true
+        description: Pricing model (flat_fee, per_unit, tiered, volume, stairstep)
+        expr:
+          kind: path
+          path:
+            - plan
+            - charge_model
+      - name: free_quantity
+        type: Int64
+        nullable: true
+        description: Number of units included for free before charging begins
+        expr:
+          kind: path
+          path:
+            - plan
+            - free_quantity
+      - name: status
+        type: Utf8
+        nullable: true
+        description: Plan status — active or archived
+        expr:
+          kind: path
+          path:
+            - plan
+            - status
+      - name: created_at
+        type: Int64
+        nullable: true
+        description: Plan creation date as Unix epoch seconds
+        expr:
+          kind: path
+          path:
+            - plan
+            - created_at
+      - name: updated_at
+        type: Int64
+        nullable: true
+        description: Last update date as Unix epoch seconds
+        expr:
+          kind: path
+          path:
+            - plan
+            - updated_at
