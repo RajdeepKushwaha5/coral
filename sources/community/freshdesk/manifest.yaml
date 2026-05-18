@@ -145,7 +145,8 @@ tables:
     guide: |
       No required filters. Useful filters:
         updated_since — ISO 8601 datetime (e.g. '2024-01-01T00:00:00Z')
-        filter        — named view: all_tickets, new_my_open, watching, spam, deleted
+        filter        — named view: new_and_my_open, watching, spam, deleted
+                        (omit to return all tickets)
 
       Status values: 2=Open, 3=Pending, 4=Resolved, 5=Closed
       Priority values: 1=Low, 2=Medium, 3=High, 4=Urgent
@@ -153,7 +154,7 @@ tables:
       Example:
         SELECT id, subject, status, priority, created_at
         FROM freshdesk.tickets
-        WHERE filter = 'new_my_open'
+        WHERE filter = 'new_and_my_open'
         ORDER BY created_at DESC
         LIMIT 25
     filters:

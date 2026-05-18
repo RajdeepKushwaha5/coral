@@ -51,12 +51,12 @@ FRESHDESK_DOMAIN=acme FRESHDESK_API_KEY=your-key coral source add --file manifes
 
 ## Example Queries
 
-All open and pending tickets:
+New and open tickets assigned to the current agent:
 
 ```sql
 SELECT id, subject, status, priority, requester_id, created_at
 FROM freshdesk.tickets
-WHERE filter = 'new_my_open'
+WHERE filter = 'new_and_my_open'
 ORDER BY created_at DESC
 LIMIT 25;
 ```
@@ -137,13 +137,12 @@ ORDER BY t.created_at DESC;
 
 | Value | Meaning |
 |-------|---------|
-| `all_tickets` | All tickets accessible to the API key |
-| `new_my_open` | New and open tickets assigned to the current agent |
+| `new_and_my_open` | New and open tickets assigned to the current agent |
 | `watching` | Tickets the current agent is watching |
 | `spam` | Tickets marked as spam |
 | `deleted` | Deleted tickets |
 
-When `filter` is omitted, Freshdesk returns all tickets (equivalent to `all_tickets`).
+When `filter` is omitted, Freshdesk returns all tickets.
 
 ## Status and Priority Reference
 
