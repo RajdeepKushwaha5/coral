@@ -1,0 +1,635 @@
+name: gmail
+version: 1.0.0
+dsl_version: 3
+backend: http
+description: >-
+  Query Gmail messages, threads, and labels as SQL tables.
+  Search your inbox, find unread important emails, and join with
+  Notion tasks or Google Calendar events for personal intelligence.
+
+base_url: https://gmail.googleapis.com
+
+inputs:
+  GOOGLE_ACCESS_TOKEN:
+    kind: secret
+    hint: |
+      A valid Google OAuth2 access token with the following scopes:
+        https://www.googleapis.com/auth/gmail.readonly
+
+      How to get one quickly:
+        1. Install Google Cloud CLI: https://cloud.google.com/sdk/docs/install
+        2. Run: gcloud auth login
+        3. Run: gcloud auth print-access-token
+        4. Paste the token here.
+
+      Tip: If you also use google_calendar, the same access token
+      works for both — just add both scopes when authenticating.
+
+auth:
+  type: HeaderAuth
+  headers:
+    - name: Authorization
+      from: template
+      template: Bearer {{input.GOOGLE_ACCESS_TOKEN}}
+
+rate_limit:
+  extra_statuses:
+    - 429
+  retry_after_header: Retry-After
+
+test_queries:
+  - SELECT * FROM gmail.labels LIMIT 1
+  - SELECT id, thread_id FROM gmail.messages WHERE q = 'newer_than:30d' LIMIT 1
+  - SELECT id, snippet FROM gmail.threads WHERE q = 'newer_than:30d' LIMIT 1
+  - SELECT function_name FROM coral.table_functions WHERE schema_name = 'gmail' ORDER BY function_name LIMIT 1
+
+functions:
+  - name: search_messages
+    description: >-
+      Provider-native Gmail search as a Coral source-scoped table function.
+      Use this when an agent has a Gmail search expression and needs compact
+      candidate message IDs before a bounded drill-down.
+    fetch_limit_default: 50
+    args:
+      - name: q
+        required: true
+        bind:
+          arg: q
+      - name: label_ids
+        required: false
+        bind:
+          arg: label_ids
+      - name: max_results
+        required: false
+        bind:
+          arg: max_results
+    request:
+      method: GET
+      path: /gmail/v1/users/me/messages
+      query:
+        - name: q
+          from: arg
+          key: q
+        - name: labelIds
+          from: arg
+          key: label_ids
+        - name: maxResults
+          from: arg_int
+          key: max_results
+          default: 50
+    response:
+      rows_path:
+        - messages
+    pagination:
+      mode: cursor_query
+      page_size:
+        default: 50
+        max: 500
+        query_param: maxResults
+      cursor_param: pageToken
+      response_cursor_path:
+        - nextPageToken
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Message ID
+        expr:
+          kind: path
+          path:
+            - id
+      - name: thread_id
+        type: Utf8
+        nullable: true
+        description: Thread ID this message belongs to
+        expr:
+          kind: path
+          path:
+            - threadId
+
+tables:
+  - name: labels
+    description: >-
+      Gmail labels (system labels like INBOX, SENT, UNREAD and
+      custom user-defined labels). Use label IDs in messages filters.
+    guide: |
+      Start here to discover available labels.
+      System labels include: INBOX, SENT, DRAFTS, TRASH, SPAM,
+      UNREAD, IMPORTANT, STARRED.
+      Use `id` values in the messages table's `label_ids` filter.
+    request:
+      method: GET
+      path: /gmail/v1/users/me/labels
+    response:
+      rows_path:
+        - labels
+    pagination:
+      mode: none
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Label identifier (e.g. INBOX, Label_12345)
+        expr:
+          kind: path
+          path:
+            - id
+      - name: name
+        type: Utf8
+        nullable: false
+        description: Display name of the label
+        expr:
+          kind: path
+          path:
+            - name
+      - name: type
+        type: Utf8
+        nullable: true
+        description: Label type — system or user
+        expr:
+          kind: path
+          path:
+            - type
+      - name: messages_total
+        type: Int64
+        nullable: true
+        description: Total number of messages with this label
+        expr:
+          kind: path
+          path:
+            - messagesTotal
+      - name: messages_unread
+        type: Int64
+        nullable: true
+        description: Number of unread messages with this label
+        expr:
+          kind: path
+          path:
+            - messagesUnread
+      - name: threads_total
+        type: Int64
+        nullable: true
+        description: Total number of threads with this label
+        expr:
+          kind: path
+          path:
+            - threadsTotal
+      - name: threads_unread
+        type: Int64
+        nullable: true
+        description: Number of unread threads with this label
+        expr:
+          kind: path
+          path:
+            - threadsUnread
+
+  - name: messages
+    description: >-
+      Gmail message list. Returns message IDs matching the query and label filters.
+      The Gmail list endpoint returns only `id` and `thread_id` per message.
+      Use `gmail.message_details` with a specific `message_id` to fetch subject,
+      sender, date, and snippet for individual messages.
+    guide: |
+      Returns `id` and `thread_id` only — the Gmail list endpoint does not return
+      message headers or body content. Use `gmail.message_details` for full metadata.
+
+      Use `q` for Gmail search syntax. Examples:
+        is:unread is:important       — unread important emails
+        subject:deadline             — emails with "deadline" in subject
+        from:boss@company.com        — emails from a specific sender
+        newer_than:7d                — emails from last 7 days
+        label:INBOX is:unread        — unread inbox emails
+
+      Typical two-step pattern:
+        SELECT id FROM gmail.messages WHERE q = 'is:unread is:important' LIMIT 10;
+        SELECT subject, from_email, date, snippet
+        FROM gmail.message_details
+        WHERE message_id = '<id from above>';
+    filters:
+      - name: q
+        required: false
+      - name: label_ids
+        required: false
+      - name: max_results
+        required: false
+    request:
+      method: GET
+      path: /gmail/v1/users/me/messages
+      query:
+        - name: q
+          from: filter
+          key: q
+        - name: labelIds
+          from: filter
+          key: label_ids
+        - name: maxResults
+          from: filter_int
+          key: max_results
+          default: 50
+    response:
+      rows_path:
+        - messages
+    pagination:
+      mode: cursor_query
+      page_size:
+        default: 50
+        max: 500
+        query_param: maxResults
+      cursor_param: pageToken
+      response_cursor_path:
+        - nextPageToken
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Message ID
+        expr:
+          kind: path
+          path:
+            - id
+      - name: thread_id
+        type: Utf8
+        nullable: true
+        description: Thread ID this message belongs to
+        expr:
+          kind: path
+          path:
+            - threadId
+      - name: q
+        type: Utf8
+        nullable: true
+        description: Gmail search query filter (virtual)
+        expr:
+          kind: from_filter
+          key: q
+        virtual: true
+      - name: label_ids_filter
+        type: Utf8
+        nullable: true
+        description: Label ID filter applied (virtual)
+        expr:
+          kind: from_filter
+          key: label_ids
+        virtual: true
+
+  - name: message_details
+    description: >-
+      Metadata for one Gmail message. Start from `gmail.messages`, then query
+      this table with `message_id` when subject, sender, date, or snippet are needed.
+    guide: |
+      Requires `message_id` from gmail.messages.id.
+      Example:
+        SELECT subject, from_email, date, snippet
+        FROM gmail.message_details
+        WHERE message_id = '...'
+    filters:
+      - name: message_id
+        required: true
+    request:
+      method: GET
+      path: /gmail/v1/users/me/messages/{{filter.message_id}}
+      query:
+        - name: format
+          from: literal
+          value: metadata
+        - name: metadataHeaders
+          from: literal
+          value: Subject
+        - name: metadataHeaders
+          from: literal
+          value: From
+        - name: metadataHeaders
+          from: literal
+          value: To
+        - name: metadataHeaders
+          from: literal
+          value: Date
+    response:
+      row_strategy: direct
+      allow_404_empty: true
+    pagination:
+      mode: none
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Message ID
+        expr:
+          kind: path
+          path:
+            - id
+      - name: thread_id
+        type: Utf8
+        nullable: true
+        description: Thread ID this message belongs to
+        expr:
+          kind: path
+          path:
+            - threadId
+      - name: subject
+        type: Utf8
+        nullable: true
+        description: Email subject line
+        expr:
+          kind: tag_value
+          path:
+            - payload
+            - headers
+          key: Subject
+          key_field: name
+          value_field: value
+      - name: from_email
+        type: Utf8
+        nullable: true
+        description: Sender email address
+        expr:
+          kind: tag_value
+          path:
+            - payload
+            - headers
+          key: From
+          key_field: name
+          value_field: value
+      - name: to_email
+        type: Utf8
+        nullable: true
+        description: Recipient email address
+        expr:
+          kind: tag_value
+          path:
+            - payload
+            - headers
+          key: To
+          key_field: name
+          value_field: value
+      - name: date
+        type: Utf8
+        nullable: true
+        description: Email date from the Date header
+        expr:
+          kind: tag_value
+          path:
+            - payload
+            - headers
+          key: Date
+          key_field: name
+          value_field: value
+      - name: snippet
+        type: Utf8
+        nullable: true
+        description: First ~150 characters of the email body
+        expr:
+          kind: path
+          path:
+            - snippet
+      - name: label_ids
+        type: Utf8
+        nullable: true
+        description: Comma-separated list of label IDs
+        expr:
+          kind: join_array
+          path:
+            - labelIds
+      - name: internal_date
+        type: Utf8
+        nullable: true
+        description: Internal date as Unix timestamp milliseconds
+        expr:
+          kind: path
+          path:
+            - internalDate
+      - name: internal_datetime
+        type: Timestamp
+        nullable: true
+        description: Internal date as a Coral timestamp
+        expr:
+          kind: format_timestamp
+          input: milliseconds
+          expr:
+            kind: path
+            path:
+              - internalDate
+      - name: message_id
+        type: Utf8
+        nullable: false
+        virtual: true
+        description: Message ID filter
+        expr:
+          kind: from_filter
+          key: message_id
+
+  - name: threads
+    description: >-
+      Gmail threads (email conversations). Each thread groups related
+      messages. Use `q` for Gmail search syntax. `snippet` shows the
+      most recent message preview.
+    guide: |
+      Threads aggregate multiple messages from a conversation.
+      Use `q` filter with Gmail search syntax to narrow results.
+      `message_count` shows how active the thread is.
+    filters:
+      - name: q
+        required: false
+      - name: label_ids
+        required: false
+    request:
+      method: GET
+      path: /gmail/v1/users/me/threads
+      query:
+        - name: q
+          from: filter
+          key: q
+        - name: labelIds
+          from: filter
+          key: label_ids
+        - name: maxResults
+          from: literal
+          value: "50"
+    response:
+      rows_path:
+        - threads
+    pagination:
+      mode: cursor_query
+      page_size:
+        default: 50
+        max: 500
+        query_param: maxResults
+      cursor_param: pageToken
+      response_cursor_path:
+        - nextPageToken
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Thread ID
+        expr:
+          kind: path
+          path:
+            - id
+      - name: snippet
+        type: Utf8
+        nullable: true
+        description: Short preview of the most recent message
+        expr:
+          kind: path
+          path:
+            - snippet
+      - name: history_id
+        type: Utf8
+        nullable: true
+        description: History ID (for change tracking)
+        expr:
+          kind: path
+          path:
+            - historyId
+      - name: q
+        type: Utf8
+        nullable: true
+        description: Gmail search query filter (virtual)
+        expr:
+          kind: from_filter
+          key: q
+        virtual: true
+
+  - name: thread_messages
+    description: >-
+      Metadata rows for every message inside one Gmail thread. Start from
+      `gmail.threads`, then query this table with `thread_id` to inspect the
+      full conversation without making the agent stitch messages manually.
+    guide: |
+      Requires `thread_id` from gmail.threads.id or gmail.messages.thread_id.
+      This table turns a Gmail conversation into one SQL result set, which is
+      useful for joining customer escalations or deadline threads to Notion tasks.
+
+      Example:
+        SELECT subject, from_email, date, snippet
+        FROM gmail.thread_messages
+        WHERE thread_id = 'thread-id-from-gmail.threads'
+        ORDER BY internal_datetime ASC
+    filters:
+      - name: thread_id
+        required: true
+    request:
+      method: GET
+      path: /gmail/v1/users/me/threads/{{filter.thread_id}}
+      query:
+        - name: format
+          from: literal
+          value: metadata
+        - name: metadataHeaders
+          from: literal
+          value: Subject
+        - name: metadataHeaders
+          from: literal
+          value: From
+        - name: metadataHeaders
+          from: literal
+          value: To
+        - name: metadataHeaders
+          from: literal
+          value: Date
+    response:
+      rows_path:
+        - messages
+    pagination:
+      mode: none
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Message ID
+        expr:
+          kind: path
+          path:
+            - id
+      - name: thread_id
+        type: Utf8
+        nullable: true
+        description: Thread ID this message belongs to
+        expr:
+          kind: path
+          path:
+            - threadId
+      - name: subject
+        type: Utf8
+        nullable: true
+        description: Email subject line
+        expr:
+          kind: tag_value
+          path:
+            - payload
+            - headers
+          key: Subject
+          key_field: name
+          value_field: value
+      - name: from_email
+        type: Utf8
+        nullable: true
+        description: Sender email address
+        expr:
+          kind: tag_value
+          path:
+            - payload
+            - headers
+          key: From
+          key_field: name
+          value_field: value
+      - name: to_email
+        type: Utf8
+        nullable: true
+        description: Recipient email address
+        expr:
+          kind: tag_value
+          path:
+            - payload
+            - headers
+          key: To
+          key_field: name
+          value_field: value
+      - name: date
+        type: Utf8
+        nullable: true
+        description: Email date from the Date header
+        expr:
+          kind: tag_value
+          path:
+            - payload
+            - headers
+          key: Date
+          key_field: name
+          value_field: value
+      - name: snippet
+        type: Utf8
+        nullable: true
+        description: First ~150 characters of the email body
+        expr:
+          kind: path
+          path:
+            - snippet
+      - name: label_ids
+        type: Utf8
+        nullable: true
+        description: Comma-separated list of label IDs
+        expr:
+          kind: join_array
+          path:
+            - labelIds
+      - name: internal_datetime
+        type: Timestamp
+        nullable: true
+        description: Internal date as a Coral timestamp
+        expr:
+          kind: format_timestamp
+          input: milliseconds
+          expr:
+            kind: path
+            path:
+              - internalDate
+      - name: thread_id_filter
+        type: Utf8
+        nullable: false
+        virtual: true
+        description: Thread ID filter
+        expr:
+          kind: from_filter
+          key: thread_id
