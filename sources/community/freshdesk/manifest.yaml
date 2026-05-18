@@ -1,0 +1,636 @@
+name: freshdesk
+version: 1.0.0
+dsl_version: 3
+backend: http
+description: >-
+  Query Freshdesk support tickets, contacts, agents, and groups as SQL tables.
+  Filter tickets by status, priority, or recency. Expand individual ticket
+  conversations. Join with Linear, GitHub, or Notion for cross-source
+  support intelligence.
+
+base_url: "https://{{input.FRESHDESK_DOMAIN}}.freshdesk.com"
+
+inputs:
+  FRESHDESK_DOMAIN:
+    kind: variable
+    hint: |
+      Your Freshdesk subdomain. If your helpdesk URL is
+      https://acme.freshdesk.com, enter `acme`.
+  FRESHDESK_API_KEY:
+    kind: secret
+    hint: |
+      Your Freshdesk API key. Find it at:
+      Profile Settings (avatar top-right) → Your API Key.
+      See https://developers.freshdesk.com/api/#authentication
+
+auth:
+  type: BasicAuth
+  username: "{{input.FRESHDESK_API_KEY}}"
+  password: "X"
+
+rate_limit:
+  extra_statuses:
+    - 429
+  retry_after_header: Retry-After
+
+test_queries:
+  - SELECT id, name FROM freshdesk.groups LIMIT 1
+
+functions:
+  - name: conversations
+    description: >-
+      All replies and private notes for a specific ticket. Pass the numeric
+      ticket ID to expand the full conversation thread.
+    fetch_limit_default: 100
+    args:
+      - name: ticket_id
+        required: true
+        bind:
+          arg: ticket_id
+    request:
+      method: GET
+      path: /api/v2/tickets/{{arg.ticket_id}}/conversations
+    response:
+      row_strategy: direct
+    pagination:
+      mode: page
+      page_param: page
+      page_start: 1
+      page_step: 1
+      page_size:
+        default: 100
+        max: 100
+        query_param: per_page
+    columns:
+      - name: id
+        type: Int64
+        nullable: false
+        description: Unique conversation entry ID
+        expr:
+          kind: path
+          path:
+            - id
+      - name: ticket_id
+        type: Int64
+        nullable: true
+        description: Ticket this conversation belongs to
+        expr:
+          kind: path
+          path:
+            - ticket_id
+      - name: body_text
+        type: Utf8
+        nullable: true
+        description: Plain-text version of the reply or note body
+        expr:
+          kind: path
+          path:
+            - body_text
+      - name: incoming
+        type: Boolean
+        nullable: true
+        description: True if the reply came from the customer (inbound)
+        expr:
+          kind: path
+          path:
+            - incoming
+      - name: private
+        type: Boolean
+        nullable: true
+        description: True if this is a private note visible only to agents
+        expr:
+          kind: path
+          path:
+            - private
+      - name: user_id
+        type: Int64
+        nullable: true
+        description: ID of the agent who wrote this entry (null for customer replies)
+        expr:
+          kind: path
+          path:
+            - user_id
+      - name: support_email
+        type: Utf8
+        nullable: true
+        description: Support email address the reply was sent from
+        expr:
+          kind: path
+          path:
+            - support_email
+      - name: created_at
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the entry was created
+        expr:
+          kind: path
+          path:
+            - created_at
+      - name: updated_at
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the entry was last updated
+        expr:
+          kind: path
+          path:
+            - updated_at
+
+tables:
+  - name: tickets
+    description: >-
+      Freshdesk support tickets. Each row is one ticket with status, priority,
+      requester, assignee, and timestamps. Filter by `updated_since` to fetch
+      recently changed tickets, or by `filter` to use a named Freshdesk view.
+      Use `freshdesk.conversations` to expand individual ticket threads.
+    guide: |
+      No required filters. Useful filters:
+        updated_since — ISO 8601 datetime (e.g. '2024-01-01T00:00:00Z')
+        filter        — named view: all_tickets, new_my_open, watching, spam, deleted
+
+      Status values: 2=Open, 3=Pending, 4=Resolved, 5=Closed
+      Priority values: 1=Low, 2=Medium, 3=High, 4=Urgent
+
+      Example:
+        SELECT id, subject, status, priority, created_at
+        FROM freshdesk.tickets
+        WHERE filter = 'new_my_open'
+        ORDER BY created_at DESC
+        LIMIT 25
+    filters:
+      - name: filter
+        required: false
+      - name: updated_since
+        required: false
+      - name: order_by
+        required: false
+      - name: order_type
+        required: false
+    request:
+      method: GET
+      path: /api/v2/tickets
+      query:
+        - name: filter
+          from: filter
+          key: filter
+        - name: updated_since
+          from: filter
+          key: updated_since
+        - name: order_by
+          from: filter
+          key: order_by
+        - name: order_type
+          from: filter
+          key: order_type
+    response:
+      row_strategy: direct
+    pagination:
+      mode: page
+      page_param: page
+      page_start: 1
+      page_step: 1
+      page_size:
+        default: 100
+        max: 100
+        query_param: per_page
+    columns:
+      - name: id
+        type: Int64
+        nullable: false
+        description: Unique ticket ID
+        expr:
+          kind: path
+          path:
+            - id
+      - name: subject
+        type: Utf8
+        nullable: true
+        description: Ticket subject line
+        expr:
+          kind: path
+          path:
+            - subject
+      - name: status
+        type: Int64
+        nullable: true
+        description: Ticket status (2=Open, 3=Pending, 4=Resolved, 5=Closed)
+        expr:
+          kind: path
+          path:
+            - status
+      - name: priority
+        type: Int64
+        nullable: true
+        description: Ticket priority (1=Low, 2=Medium, 3=High, 4=Urgent)
+        expr:
+          kind: path
+          path:
+            - priority
+      - name: type
+        type: Utf8
+        nullable: true
+        description: Ticket type (e.g. Question, Incident, Problem, Feature Request)
+        expr:
+          kind: path
+          path:
+            - type
+      - name: source
+        type: Int64
+        nullable: true
+        description: Channel source (1=Email, 2=Portal, 3=Phone, 7=Chat, 9=Bot)
+        expr:
+          kind: path
+          path:
+            - source
+      - name: requester_id
+        type: Int64
+        nullable: true
+        description: Contact ID of the ticket requester
+        expr:
+          kind: path
+          path:
+            - requester_id
+      - name: responder_id
+        type: Int64
+        nullable: true
+        description: Agent ID currently assigned to the ticket
+        expr:
+          kind: path
+          path:
+            - responder_id
+      - name: group_id
+        type: Int64
+        nullable: true
+        description: Group ID the ticket is assigned to
+        expr:
+          kind: path
+          path:
+            - group_id
+      - name: tags
+        type: Utf8
+        nullable: true
+        description: Comma-separated list of tag names
+        expr:
+          kind: join_array
+          path:
+            - tags
+      - name: spam
+        type: Boolean
+        nullable: true
+        description: True if the ticket is marked as spam
+        expr:
+          kind: path
+          path:
+            - spam
+      - name: deleted
+        type: Boolean
+        nullable: true
+        description: True if the ticket has been deleted
+        expr:
+          kind: path
+          path:
+            - deleted
+      - name: is_escalated
+        type: Boolean
+        nullable: true
+        description: True if the ticket has been escalated
+        expr:
+          kind: path
+          path:
+            - is_escalated
+      - name: fr_escalated
+        type: Boolean
+        nullable: true
+        description: True if the first response SLA has been breached
+        expr:
+          kind: path
+          path:
+            - fr_escalated
+      - name: due_by
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp for resolution SLA deadline
+        expr:
+          kind: path
+          path:
+            - due_by
+      - name: fr_due_by
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp for first response SLA deadline
+        expr:
+          kind: path
+          path:
+            - fr_due_by
+      - name: created_at
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the ticket was created
+        expr:
+          kind: path
+          path:
+            - created_at
+      - name: updated_at
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the ticket was last updated
+        expr:
+          kind: path
+          path:
+            - updated_at
+
+  - name: contacts
+    description: >-
+      Freshdesk contacts (customers). Each row is one contact with name,
+      email, phone, and company. Use `updated_since` to fetch recently
+      modified contacts.
+    guide: |
+      No required filters.
+        updated_since — ISO 8601 datetime to fetch recently updated contacts
+        state         — blocked, verified, unverified, or all (default)
+
+      Example:
+        SELECT id, name, email, company_id
+        FROM freshdesk.contacts
+        WHERE state = 'verified'
+        ORDER BY created_at DESC
+        LIMIT 50
+    filters:
+      - name: updated_since
+        required: false
+      - name: state
+        required: false
+    request:
+      method: GET
+      path: /api/v2/contacts
+      query:
+        - name: updated_since
+          from: filter
+          key: updated_since
+        - name: state
+          from: filter
+          key: state
+    response:
+      row_strategy: direct
+    pagination:
+      mode: page
+      page_param: page
+      page_start: 1
+      page_step: 1
+      page_size:
+        default: 100
+        max: 100
+        query_param: per_page
+    columns:
+      - name: id
+        type: Int64
+        nullable: false
+        description: Unique contact ID
+        expr:
+          kind: path
+          path:
+            - id
+      - name: name
+        type: Utf8
+        nullable: true
+        description: Contact full name
+        expr:
+          kind: path
+          path:
+            - name
+      - name: email
+        type: Utf8
+        nullable: true
+        description: Primary email address
+        expr:
+          kind: path
+          path:
+            - email
+      - name: phone
+        type: Utf8
+        nullable: true
+        description: Work phone number
+        expr:
+          kind: path
+          path:
+            - phone
+      - name: mobile
+        type: Utf8
+        nullable: true
+        description: Mobile phone number
+        expr:
+          kind: path
+          path:
+            - mobile
+      - name: company_id
+        type: Int64
+        nullable: true
+        description: Company this contact belongs to
+        expr:
+          kind: path
+          path:
+            - company_id
+      - name: active
+        type: Boolean
+        nullable: true
+        description: True if the contact is active (not blocked)
+        expr:
+          kind: path
+          path:
+            - active
+      - name: tags
+        type: Utf8
+        nullable: true
+        description: Comma-separated list of tag names
+        expr:
+          kind: join_array
+          path:
+            - tags
+      - name: created_at
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the contact was created
+        expr:
+          kind: path
+          path:
+            - created_at
+      - name: updated_at
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the contact was last updated
+        expr:
+          kind: path
+          path:
+            - updated_at
+
+  - name: agents
+    description: >-
+      Freshdesk support agents on the account. Each row is one agent with
+      their contact details (name, email), availability status, and ticket scope.
+    guide: |
+      No filters required. Returns all agents on the account.
+
+      ticket_scope values: 1=Global, 2=Group, 3=Restricted
+      type values: fulltime, occasional
+
+      Example:
+        SELECT id, name, email, available, type
+        FROM freshdesk.agents
+        ORDER BY name ASC
+    request:
+      method: GET
+      path: /api/v2/agents
+    response:
+      row_strategy: direct
+    pagination:
+      mode: page
+      page_param: page
+      page_start: 1
+      page_step: 1
+      page_size:
+        default: 100
+        max: 100
+        query_param: per_page
+    columns:
+      - name: id
+        type: Int64
+        nullable: false
+        description: Unique agent ID
+        expr:
+          kind: path
+          path:
+            - id
+      - name: name
+        type: Utf8
+        nullable: true
+        description: Agent full name
+        expr:
+          kind: path
+          path:
+            - contact
+            - name
+      - name: email
+        type: Utf8
+        nullable: true
+        description: Agent email address
+        expr:
+          kind: path
+          path:
+            - contact
+            - email
+      - name: phone
+        type: Utf8
+        nullable: true
+        description: Agent phone number
+        expr:
+          kind: path
+          path:
+            - contact
+            - phone
+      - name: type
+        type: Utf8
+        nullable: true
+        description: Agent type — fulltime or occasional
+        expr:
+          kind: path
+          path:
+            - type
+      - name: available
+        type: Boolean
+        nullable: true
+        description: True if the agent is currently available to accept tickets
+        expr:
+          kind: path
+          path:
+            - available
+      - name: ticket_scope
+        type: Int64
+        nullable: true
+        description: Ticket visibility scope (1=Global, 2=Group, 3=Restricted)
+        expr:
+          kind: path
+          path:
+            - ticket_scope
+      - name: created_at
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the agent was added
+        expr:
+          kind: path
+          path:
+            - created_at
+      - name: updated_at
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the agent was last updated
+        expr:
+          kind: path
+          path:
+            - updated_at
+
+  - name: groups
+    description: >-
+      Freshdesk agent groups. Each row is one group with its name and
+      description. Use `group_id` values here when joining with
+      `freshdesk.tickets`.
+    guide: |
+      No filters required. Returns all groups on the account.
+
+      Example:
+        SELECT id, name
+        FROM freshdesk.groups
+        ORDER BY name ASC
+    request:
+      method: GET
+      path: /api/v2/groups
+    response:
+      row_strategy: direct
+    pagination:
+      mode: page
+      page_param: page
+      page_start: 1
+      page_step: 1
+      page_size:
+        default: 100
+        max: 100
+        query_param: per_page
+    columns:
+      - name: id
+        type: Int64
+        nullable: false
+        description: Unique group ID
+        expr:
+          kind: path
+          path:
+            - id
+      - name: name
+        type: Utf8
+        nullable: false
+        description: Group display name
+        expr:
+          kind: path
+          path:
+            - name
+      - name: description
+        type: Utf8
+        nullable: true
+        description: Group description
+        expr:
+          kind: path
+          path:
+            - description
+      - name: created_at
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the group was created
+        expr:
+          kind: path
+          path:
+            - created_at
+      - name: updated_at
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the group was last updated
+        expr:
+          kind: path
+          path:
+            - updated_at
