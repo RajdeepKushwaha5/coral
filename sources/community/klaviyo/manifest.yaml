@@ -1,0 +1,395 @@
+name: klaviyo
+version: 1.0.0
+dsl_version: 3
+backend: http
+description: >-
+  Query Klaviyo email marketing data as SQL tables. Inspect subscriber lists,
+  campaigns, automation flows, and event metric definitions. Join with Shopify
+  orders or Chargebee subscriptions for e-commerce revenue intelligence.
+
+base_url: https://a.klaviyo.com
+
+inputs:
+  KLAVIYO_API_KEY:
+    kind: secret
+    hint: |
+      Your Klaviyo private API key. Find it in the Klaviyo dashboard under
+      Settings → API Keys → Create Private API Key.
+      Use a key with read-only access to the resources you plan to query.
+      See https://developers.klaviyo.com/en/docs/retrieve_api_credentials
+
+auth:
+  type: HeaderAuth
+  headers:
+    - name: Authorization
+      from: template
+      template: Klaviyo-API-Key {{input.KLAVIYO_API_KEY}}
+
+request_headers:
+  - name: revision
+    from: literal
+    value: "2023-12-15"
+
+rate_limit:
+  extra_statuses:
+    - 429
+  retry_after_header: Retry-After
+
+test_queries:
+  - SELECT id, name FROM klaviyo.lists LIMIT 1
+
+tables:
+  - name: lists
+    description: >-
+      Klaviyo subscriber lists. Each row is one list with its name and
+      opt-in configuration. Use list IDs to segment campaign audiences or
+      join with chargebee.customers for subscription-level targeting.
+    guide: |
+      No filters required. Returns up to 100 lists.
+
+      opt_in_process values:
+        double_opt_in  — subscriber must confirm via email
+        single_opt_in  — subscriber is added immediately
+
+      Example:
+        SELECT id, name, opt_in_process, created
+        FROM klaviyo.lists
+        ORDER BY created DESC
+    request:
+      method: GET
+      path: /api/lists/
+      query:
+        - name: "page[size]"
+          from: literal
+          value: "100"
+    response:
+      rows_path:
+        - data
+    pagination:
+      mode: none
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Unique list ID
+        expr:
+          kind: path
+          path:
+            - id
+      - name: name
+        type: Utf8
+        nullable: true
+        description: List display name
+        expr:
+          kind: path
+          path:
+            - attributes
+            - name
+      - name: opt_in_process
+        type: Utf8
+        nullable: true
+        description: Opt-in process — double_opt_in or single_opt_in
+        expr:
+          kind: path
+          path:
+            - attributes
+            - opt_in_process
+      - name: created
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the list was created
+        expr:
+          kind: path
+          path:
+            - attributes
+            - created
+      - name: updated
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the list was last updated
+        expr:
+          kind: path
+          path:
+            - attributes
+            - updated
+
+  - name: campaigns
+    description: >-
+      Klaviyo email and SMS campaigns. Each row is one campaign with its name,
+      channel, status, and send time. Use campaign IDs to reference audience
+      lists and track performance.
+    guide: |
+      No filters required. Returns up to 100 campaigns, most recently
+      updated first.
+
+      status values: Draft, Scheduled, Sending, Sent, Cancelled
+      channel values: email, sms
+
+      Example:
+        SELECT id, name, status, channel, send_time
+        FROM klaviyo.campaigns
+        WHERE status = 'Sent'
+        ORDER BY send_time DESC
+        LIMIT 25
+    request:
+      method: GET
+      path: /api/campaigns/
+      query:
+        - name: "page[size]"
+          from: literal
+          value: "100"
+        - name: sort
+          from: literal
+          value: "-updated_at"
+    response:
+      rows_path:
+        - data
+    pagination:
+      mode: none
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Unique campaign ID
+        expr:
+          kind: path
+          path:
+            - id
+      - name: name
+        type: Utf8
+        nullable: true
+        description: Campaign display name
+        expr:
+          kind: path
+          path:
+            - attributes
+            - name
+      - name: status
+        type: Utf8
+        nullable: true
+        description: Campaign status (Draft, Scheduled, Sending, Sent, Cancelled)
+        expr:
+          kind: path
+          path:
+            - attributes
+            - status
+      - name: channel
+        type: Utf8
+        nullable: true
+        description: Delivery channel — email or sms
+        expr:
+          kind: path
+          path:
+            - attributes
+            - channel
+      - name: archived
+        type: Boolean
+        nullable: true
+        description: True if the campaign has been archived
+        expr:
+          kind: path
+          path:
+            - attributes
+            - archived
+      - name: send_time
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the campaign was or will be sent
+        expr:
+          kind: path
+          path:
+            - attributes
+            - send_time
+      - name: scheduled_at
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the campaign is scheduled to send (null if not scheduled)
+        expr:
+          kind: path
+          path:
+            - attributes
+            - scheduled_at
+      - name: created_at
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the campaign was created
+        expr:
+          kind: path
+          path:
+            - attributes
+            - created_at
+      - name: updated_at
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the campaign was last updated
+        expr:
+          kind: path
+          path:
+            - attributes
+            - updated_at
+
+  - name: flows
+    description: >-
+      Klaviyo automation flows (sequences). Each row is one flow with its name
+      and status. Flows are triggered email or SMS sequences sent to subscribers
+      based on events or list membership.
+    guide: |
+      No filters required. Returns up to 100 flows.
+
+      status values: draft, live, manual, archived
+
+      Example:
+        SELECT id, name, status, created
+        FROM klaviyo.flows
+        WHERE status = 'live'
+        ORDER BY created DESC
+    request:
+      method: GET
+      path: /api/flows/
+      query:
+        - name: "page[size]"
+          from: literal
+          value: "100"
+    response:
+      rows_path:
+        - data
+    pagination:
+      mode: none
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Unique flow ID
+        expr:
+          kind: path
+          path:
+            - id
+      - name: name
+        type: Utf8
+        nullable: true
+        description: Flow display name
+        expr:
+          kind: path
+          path:
+            - attributes
+            - name
+      - name: status
+        type: Utf8
+        nullable: true
+        description: Flow status (draft, live, manual, archived)
+        expr:
+          kind: path
+          path:
+            - attributes
+            - status
+      - name: archived
+        type: Boolean
+        nullable: true
+        description: True if the flow has been archived
+        expr:
+          kind: path
+          path:
+            - attributes
+            - archived
+      - name: created
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the flow was created
+        expr:
+          kind: path
+          path:
+            - attributes
+            - created
+      - name: updated
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the flow was last updated
+        expr:
+          kind: path
+          path:
+            - attributes
+            - updated
+
+  - name: metrics
+    description: >-
+      Klaviyo event metric definitions. Each row is one metric type such as
+      Placed Order, Opened Email, or Clicked SMS. Use metric names to
+      understand what events are tracked in the account.
+    guide: |
+      No filters required. Returns up to 100 metric definitions.
+
+      integration.name shows the source that generates this metric
+      (e.g. API, Shopify, Mailchimp).
+
+      Example:
+        SELECT id, name, integration_name, integration_category, created
+        FROM klaviyo.metrics
+        ORDER BY name ASC
+    request:
+      method: GET
+      path: /api/metrics/
+      query:
+        - name: "page[size]"
+          from: literal
+          value: "100"
+    response:
+      rows_path:
+        - data
+    pagination:
+      mode: none
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Unique metric ID
+        expr:
+          kind: path
+          path:
+            - id
+      - name: name
+        type: Utf8
+        nullable: true
+        description: Metric display name (e.g. Placed Order, Opened Email)
+        expr:
+          kind: path
+          path:
+            - attributes
+            - name
+      - name: integration_name
+        type: Utf8
+        nullable: true
+        description: Name of the integration that generates this metric (e.g. API, Shopify)
+        expr:
+          kind: path
+          path:
+            - attributes
+            - integration
+            - name
+      - name: integration_category
+        type: Utf8
+        nullable: true
+        description: Category of the integration (e.g. api, ecommerce, email)
+        expr:
+          kind: path
+          path:
+            - attributes
+            - integration
+            - category
+      - name: created
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the metric was first seen
+        expr:
+          kind: path
+          path:
+            - attributes
+            - created
+      - name: updated
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the metric was last updated
+        expr:
+          kind: path
+          path:
+            - attributes
+            - updated
