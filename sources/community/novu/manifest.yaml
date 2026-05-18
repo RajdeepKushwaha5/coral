@@ -155,7 +155,8 @@ tables:
       No filters required. Returns all subscribers in the project.
 
       subscriber_id is your application's identifier for the user.
-      id is Novu's internal identifier — use subscriber_id for joins.
+      id is Novu's internal identifier — use id to join with novu.notifications
+      (novu.notifications.subscriber_id = novu.subscribers.id).
 
       Example:
         SELECT subscriber_id, first_name, last_name, email, created_at
