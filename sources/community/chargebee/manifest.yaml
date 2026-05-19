@@ -27,6 +27,10 @@ inputs:
 auth:
   type: BasicAuth
   username: "{{input.CHARGEBEE_API_KEY}}"
+  # Chargebee docs say "leave password blank", but the Coral source spec
+  # requires minLength:1 for BasicAuth passwords. Chargebee authenticates
+  # solely on the username (API key) and ignores the password field entirely,
+  # so any non-empty placeholder satisfies both constraints.
   password: "x"
 
 rate_limit:

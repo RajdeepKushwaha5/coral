@@ -29,6 +29,10 @@ Requires `CHARGEBEE_SITE` and `CHARGEBEE_API_KEY`.
 
 Your Chargebee URL is `https://{site}.chargebee.com`. Enter just the subdomain (e.g. `acme`, not the full URL). For a test site use `acme-test`.
 
+**Note on the password field:**
+
+Chargebee uses HTTP Basic Auth with the API key as the username and an [empty password](https://apidocs.chargebee.com/docs/api/auth). The Coral source spec requires `minLength: 1` for BasicAuth passwords, so the manifest sends a literal `x` as the password value. Chargebee authenticates purely on the API key (username) and ignores the password field entirely — the connector behaves identically to sending `base64(<api_key>:)`. This is the same pattern used by other community sources in this repository that work around the same schema constraint.
+
 ## Install
 
 ```bash
