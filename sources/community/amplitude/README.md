@@ -10,7 +10,7 @@ Query Amplitude Analytics as SQL tables. Browse your full event catalog, timelin
 
 | Table | Description | Required filters | Optional filters |
 |-------|-------------|-----------------|-----------------|
-| `amplitude.events` | All event types tracked in the project with occurrence counts | — | — |
+| `amplitude.events` | All event types tracked in the project with occurrence counts and visibility flags | — | — |
 | `amplitude.annotations` | Timeline annotation markers with dates and labels | — | — |
 
 ## Source-Scoped Table Functions
@@ -131,7 +131,7 @@ The `user_id` argument accepts three formats:
 ## Notes
 
 - All tables are strictly read-only.
-- `amplitude.events` uses `GET /api/2/events/list` (Dashboard REST API v2). Returns all visible event types in a single request — no pagination. Hidden events are excluded by the API.
+- `amplitude.events` uses `GET /api/2/events/list` (Dashboard REST API v2). Returns all event types in a single request — no pagination. The `hidden` column marks events hidden in the Amplitude UI; use `WHERE hidden = false` to exclude them.
 - `amplitude.annotations` uses `GET /api/3/annotations` (Chart Annotations API v3). Returns all annotations in a single request. The `start` and `end` columns are ISO 8601 timestamps; `end` is null for single-day annotations.
 - `amplitude.user_activity` uses `GET /api/2/useractivity` and returns up to the last 1 000 events for the specified user.
 - Rate limits vary by Amplitude plan. The connector handles `429` responses automatically via `Retry-After`.
