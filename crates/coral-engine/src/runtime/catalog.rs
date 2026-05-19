@@ -9,10 +9,14 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::datasource::MemTable;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::prelude::SessionContext;
+use serde::Serialize;
 
 use crate::backends::RegisteredSource;
 use crate::runtime::schema_provider::StaticSchemaProvider;
-use crate::{ColumnInfo, TableInfo};
+use crate::{
+    ColumnInfo, TableFunctionArgumentInfo, TableFunctionInfo, TableFunctionResultColumnInfo,
+    TableInfo,
+};
 
 /// Schema name for source metadata tables such as `coral.tables`.
 pub(crate) const SYSTEM_SCHEMA: &str = "coral";
@@ -59,13 +63,15 @@ fn build_table_functions_table(active_sources: &[RegisteredSource]) -> Result<Me
         Field::new("result_columns_json", DataType::Utf8, false),
     ]));
 
-    let mut rows = active_sources
+    let rows = collect_table_functions(active_sources);
+    let arguments_json = rows
         .iter()
-        .flat_map(|source| source.table_functions.iter())
-        .collect::<Vec<_>>();
-    rows.sort_by(|left, right| {
-        (&left.schema_name, &left.function_name).cmp(&(&right.schema_name, &right.function_name))
-    });
+        .map(table_function_arguments_json)
+        .collect::<Result<Vec<_>>>()?;
+    let result_columns_json = rows
+        .iter()
+        .map(table_function_result_columns_json)
+        .collect::<Result<Vec<_>>>()?;
 
     let batch = RecordBatch::try_new(
         schema.clone(),
@@ -73,16 +79,68 @@ fn build_table_functions_table(active_sources: &[RegisteredSource]) -> Result<Me
             utf8_column(rows.iter().map(|row| Some(row.schema_name.as_str()))),
             utf8_column(rows.iter().map(|row| Some(row.function_name.as_str()))),
             utf8_column(rows.iter().map(|row| Some(row.description.as_str()))),
-            utf8_column(rows.iter().map(|row| Some(row.arguments_json.as_str()))),
-            utf8_column(
-                rows.iter()
-                    .map(|row| Some(row.result_columns_json.as_str())),
-            ),
+            utf8_column(arguments_json.iter().map(|value| Some(value.as_str()))),
+            utf8_column(result_columns_json.iter().map(|value| Some(value.as_str()))),
         ],
     )
     .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?;
 
     MemTable::try_new(schema, vec![vec![batch]])
+}
+
+fn table_function_arguments_json(row: &TableFunctionInfo) -> Result<String> {
+    let arguments = row
+        .arguments
+        .iter()
+        .map(TableFunctionArgumentJson::from)
+        .collect::<Vec<_>>();
+    serde_json::to_string(&arguments).map_err(|error| DataFusionError::External(Box::new(error)))
+}
+
+fn table_function_result_columns_json(row: &TableFunctionInfo) -> Result<String> {
+    let columns = row
+        .result_columns
+        .iter()
+        .map(TableFunctionResultColumnJson::from)
+        .collect::<Vec<_>>();
+    serde_json::to_string(&columns).map_err(|error| DataFusionError::External(Box::new(error)))
+}
+
+#[derive(Serialize)]
+struct TableFunctionArgumentJson<'a> {
+    name: &'a str,
+    required: bool,
+    values: &'a [String],
+}
+
+impl<'a> From<&'a TableFunctionArgumentInfo> for TableFunctionArgumentJson<'a> {
+    fn from(argument: &'a TableFunctionArgumentInfo) -> Self {
+        Self {
+            name: &argument.name,
+            required: argument.required,
+            values: &argument.values,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct TableFunctionResultColumnJson<'a> {
+    name: &'a str,
+    #[serde(rename = "type")]
+    data_type: &'a str,
+    nullable: bool,
+    description: &'a str,
+}
+
+impl<'a> From<&'a TableFunctionResultColumnInfo> for TableFunctionResultColumnJson<'a> {
+    fn from(column: &'a TableFunctionResultColumnInfo) -> Self {
+        Self {
+            name: &column.name,
+            data_type: &column.data_type,
+            nullable: column.nullable,
+            description: &column.description,
+        }
+    }
 }
 
 fn utf8_column<'a>(values: impl IntoIterator<Item = Option<&'a str>>) -> ArrayRef {
@@ -122,6 +180,49 @@ pub(crate) fn collect_tables(active_sources: &[RegisteredSource]) -> Vec<TableIn
         (&left.schema_name, &left.table_name).cmp(&(&right.schema_name, &right.table_name))
     });
     tables
+}
+
+/// Collect typed source-scoped table function metadata for the active source set.
+#[must_use]
+pub(crate) fn collect_table_functions(
+    active_sources: &[RegisteredSource],
+) -> Vec<TableFunctionInfo> {
+    let mut functions = active_sources
+        .iter()
+        .flat_map(|source| {
+            source
+                .table_functions
+                .iter()
+                .map(move |function| TableFunctionInfo {
+                    schema_name: function.schema_name.clone(),
+                    function_name: function.function_name.clone(),
+                    description: function.description.clone(),
+                    arguments: function
+                        .arguments
+                        .iter()
+                        .map(|argument| TableFunctionArgumentInfo {
+                            name: argument.name.clone(),
+                            required: argument.required,
+                            values: argument.values.clone(),
+                        })
+                        .collect(),
+                    result_columns: function
+                        .result_columns
+                        .iter()
+                        .map(|column| TableFunctionResultColumnInfo {
+                            name: column.name.clone(),
+                            data_type: column.data_type.clone(),
+                            nullable: column.nullable,
+                            description: column.description.clone(),
+                        })
+                        .collect(),
+                })
+        })
+        .collect::<Vec<_>>();
+    functions.sort_by(|left, right| {
+        (&left.schema_name, &left.function_name).cmp(&(&right.schema_name, &right.function_name))
+    });
+    functions
 }
 
 fn build_tables_table(active_sources: &[RegisteredSource]) -> Result<MemTable> {
@@ -381,4 +482,37 @@ fn build_columns_table(active_sources: &[RegisteredSource]) -> Result<MemTable> 
     .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?;
 
     MemTable::try_new(schema, vec![vec![batch]])
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::backends::{RegisteredSource, RegisteredTableFunction};
+
+    use super::collect_table_functions;
+
+    #[test]
+    fn collect_table_functions_preserves_registered_function_schema() {
+        let functions = collect_table_functions(&[RegisteredSource {
+            schema_name: "source_schema".to_string(),
+            tables: Vec::new(),
+            table_functions: vec![RegisteredTableFunction {
+                schema_name: "function_schema".to_string(),
+                function_name: "search".to_string(),
+                internal_name: "internal_search".to_string(),
+                description: String::new(),
+                arguments: Vec::new(),
+                result_columns: Vec::new(),
+                arg_names: Vec::new(),
+            }],
+            inputs: Vec::new(),
+        }]);
+
+        assert_eq!(functions.len(), 1);
+        assert_eq!(
+            functions
+                .first()
+                .map(|function| function.schema_name.as_str()),
+            Some("function_schema")
+        );
+    }
 }

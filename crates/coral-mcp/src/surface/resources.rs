@@ -1,20 +1,31 @@
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
-use coral_api::v1::{ListTablesResponse, Source, Table, TableSummary};
+use coral_api::v1::{Source, TableSummary};
 use rmcp::model::{AnnotateAble, RawResource, Resource};
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::Value;
 
-static INITIAL_INSTRUCTIONS: &str = "You are connected to Coral. Read `coral://guide` for query patterns, use `list_tables`, `search_tables`, `describe_table`, and `list_columns` to inspect queryable tables, and use `sql` for final queries.";
+use super::values::queryable_table_summary_values;
+
+static INITIAL_INSTRUCTIONS: &str = "You are connected to Coral. Read `coral://guide` for query patterns, use `list_catalog` and `search_catalog` to inspect queryable tables and source-scoped table functions, use `describe_table` and `list_columns` for table-specific metadata, and use `sql` for final queries.";
 static GUIDE_TEMPLATE: &str = include_str!("../guide_template.md");
 
 pub(crate) fn initial_instructions() -> &'static str {
     INITIAL_INSTRUCTIONS
 }
 
-pub(crate) fn guide_resource(sources: &[Source], visible_table_count: usize) -> Resource {
+pub(crate) fn guide_resource(
+    sources: &[Source],
+    visible_table_count: usize,
+    visible_function_count: usize,
+) -> Resource {
     RawResource::new("coral://guide", "guide")
-        .with_description(guide_resource_description(sources, visible_table_count))
+        .with_description(guide_resource_description(
+            sources,
+            visible_table_count,
+            visible_function_count,
+        ))
         .with_mime_type("text/markdown")
         .no_annotation()
 }
@@ -26,15 +37,20 @@ pub(crate) fn tables_resource(visible_table_count: usize) -> Resource {
         .no_annotation()
 }
 
-pub(crate) fn guide_resource_content(sources: &[Source], tables: &[TableSummary]) -> String {
+pub(crate) fn guide_resource_content(
+    sources: &[Source],
+    tables: &[TableSummary],
+    table_function_schema_names: &[String],
+) -> String {
     let mut sources_section = String::from("## Available Schemas\n\n");
     sources_section.push_str(
-        "- coral: System metadata schema. Use `coral.tables` and `coral.columns` to discover queryable tables, columns, descriptions, and required filters.\n",
+        "- coral: System metadata schema. Use `coral.tables`, `coral.columns`, and `coral.table_functions` to discover queryable tables, source-scoped table functions, columns, descriptions, and required filters.\n",
     );
-    let schemas = tables
+    let mut schemas = tables
         .iter()
         .map(|table| table.schema_name.as_str())
         .collect::<BTreeSet<_>>();
+    schemas.extend(table_function_schema_names.iter().map(String::as_str));
     if schemas.is_empty() {
         if sources.is_empty() {
             sources_section.push_str("\nNo source schemas are currently configured.\n");
@@ -71,80 +87,31 @@ FROM coral.columns WHERE schema_name = '{schema_name}' AND table_name = '{table_
 pub(crate) fn tables_resource_content(
     tables: &[TableSummary],
 ) -> Result<String, serde_json::Error> {
-    serde_json::to_string_pretty(&json!({ "tables": queryable_tables(tables) }))
+    serde_json::to_string_pretty(&TablesResourceContent {
+        tables: queryable_table_summary_values(tables),
+    })
 }
 
-pub(crate) fn list_tables_value(response: &ListTablesResponse) -> Value {
-    let pagination = response.pagination.unwrap_or_default();
-    let table_summaries = response_table_summaries(response);
-    let mut value = json!({
-        "tables": queryable_tables(&table_summaries),
-        "total": pagination.total_count,
-        "limit": pagination.limit,
-        "offset": pagination.offset,
-        "has_more": pagination.has_more,
-    });
-    if pagination.has_more {
-        value
-            .as_object_mut()
-            .expect("list tables value is initialized as a JSON object")
-            .insert("next_offset".to_string(), json!(pagination.next_offset));
-    }
-    value
+#[derive(Serialize)]
+struct TablesResourceContent {
+    tables: Vec<Value>,
 }
 
-fn guide_resource_description(sources: &[Source], visible_table_count: usize) -> String {
+fn guide_resource_description(
+    sources: &[Source],
+    visible_table_count: usize,
+    visible_function_count: usize,
+) -> String {
     format!(
-        "Query workflow and schema discovery guidance for {} configured source(s) and {} visible table(s).",
+        "Query workflow and schema discovery guidance for {} configured source(s), {} visible table(s), and {} visible table function(s).",
         sources.len(),
-        visible_table_count
+        visible_table_count,
+        visible_function_count
     )
 }
 
 fn tables_resource_description(visible_table_count: usize) -> String {
     format!("Queryable fully qualified Coral tables ({visible_table_count} table(s)).")
-}
-
-fn queryable_tables(tables: &[TableSummary]) -> Vec<Value> {
-    let mut summaries = tables
-        .iter()
-        .map(|table| {
-            json!({
-                "schema_name": table.schema_name,
-                "table_name": table.name,
-                "name": format!("{}.{}", table.schema_name, table.name),
-                "sql_reference": format_schema_table_equivalent(&table.schema_name, &table.name),
-                "description": table.description,
-                "guide": table.guide,
-                "required_filters": table.required_filters,
-            })
-        })
-        .collect::<Vec<_>>();
-    summaries.sort_by(|left, right| {
-        left.get("name")
-            .and_then(Value::as_str)
-            .cmp(&right.get("name").and_then(Value::as_str))
-    });
-    summaries
-}
-
-fn response_table_summaries(response: &ListTablesResponse) -> Vec<TableSummary> {
-    if response.table_summaries.is_empty() {
-        response.tables.iter().map(table_to_summary).collect()
-    } else {
-        response.table_summaries.clone()
-    }
-}
-
-fn table_to_summary(table: &Table) -> TableSummary {
-    TableSummary {
-        workspace: table.workspace.clone(),
-        schema_name: table.schema_name.clone(),
-        name: table.name.clone(),
-        description: table.description.clone(),
-        required_filters: table.required_filters.clone(),
-        guide: table.guide.clone(),
-    }
 }
 
 fn first_visible_table(tables: &[TableSummary]) -> Option<(&str, &str)> {
@@ -156,44 +123,12 @@ fn first_visible_table(tables: &[TableSummary]) -> Option<(&str, &str)> {
         .map(|table| (table.schema_name.as_str(), table.name.as_str()))
 }
 
-pub(crate) fn format_schema_table_equivalent(schema_name: &str, table_name: &str) -> String {
-    format!(
-        "{}.{}",
-        quote_identifier_if_needed(schema_name),
-        quote_identifier_if_needed(table_name)
-    )
-}
-
-fn quote_identifier_if_needed(identifier: &str) -> String {
-    if identifier_needs_quotes(identifier) {
-        format!("\"{}\"", identifier.replace('"', "\"\""))
-    } else {
-        identifier.to_string()
-    }
-}
-
-fn identifier_needs_quotes(identifier: &str) -> bool {
-    let mut chars = identifier.chars();
-    let Some(first) = chars.next() else {
-        return true;
-    };
-    if !(first.is_ascii_lowercase() || first == '_') {
-        return true;
-    }
-    !chars.all(|char| char.is_ascii_lowercase() || char.is_ascii_digit() || char == '_')
-}
-
 #[cfg(test)]
 mod tests {
-    #![expect(
-        clippy::indexing_slicing,
-        reason = "JSON shape assertions intentionally fail loudly in tests"
-    )]
+    use coral_api::v1::{Source, TableSummary, Workspace};
 
-    use coral_api::v1::{ListTablesResponse, PaginationResponse, Source, TableSummary, Workspace};
-    use serde_json::json;
-
-    use super::{format_schema_table_equivalent, guide_resource_content, list_tables_value};
+    use super::guide_resource_content;
+    use crate::surface::values::format_schema_table_equivalent;
 
     fn source(name: &str) -> Source {
         Source {
@@ -223,7 +158,7 @@ mod tests {
 
     #[test]
     fn guide_content_renders_placeholder_when_no_schemas_exist() {
-        let content = guide_resource_content(&[source("demo")], &[]);
+        let content = guide_resource_content(&[source("demo")], &[], &[]);
         assert!(content.contains("## Available Schemas"));
         assert!(content.contains("- coral: System metadata schema."));
         assert!(content.contains("No query-visible source schemas are currently available."));
@@ -235,6 +170,7 @@ mod tests {
         let content = guide_resource_content(
             &[source("demo")],
             &[table("slack", "channels"), table("slack", "messages")],
+            &[],
         );
         assert!(content.contains("## Available Schemas"));
         assert!(content.contains("- coral: System metadata schema."));
@@ -242,43 +178,20 @@ mod tests {
         assert!(content.contains("- slack"));
         assert!(
             content.contains(
-                "Use each table's `sql_reference` from `list_tables` or `coral://tables`"
+                "Use each table's `sql_reference` from `list_catalog` or `coral://tables`"
             )
         );
     }
 
     #[test]
-    fn list_tables_value_includes_compatible_name_and_sql_reference() {
-        let value = list_tables_value(&ListTablesResponse {
-            tables: Vec::new(),
-            pagination: Some(PaginationResponse {
-                total_count: 1,
-                limit: 50,
-                offset: 0,
-                has_more: false,
-                next_offset: 0,
-            }),
-            table_summaries: vec![table("local_messages", "events")],
-        });
+    fn guide_content_includes_function_only_schemas() {
+        let function_schemas = vec!["searchy".to_string()];
 
-        assert_eq!(value["tables"][0]["name"], "local_messages.events");
-        assert_eq!(value["tables"][0]["sql_reference"], "local_messages.events");
-        assert_eq!(
-            value["tables"][0],
-            json!({
-                "schema_name": "local_messages",
-                "table_name": "events",
-                "name": "local_messages.events",
-                "sql_reference": "local_messages.events",
-                "description": "events description",
-                "guide": "Query events.",
-                "required_filters": [],
-            })
-        );
-        assert_eq!(value["total"], 1);
-        assert_eq!(value["limit"], 50);
-        assert_eq!(value["offset"], 0);
-        assert_eq!(value["has_more"], false);
+        let content = guide_resource_content(&[source("searchy")], &[], &function_schemas);
+
+        assert!(content.contains("Visible source schemas:"));
+        assert!(content.contains("- searchy"));
+        assert!(!content.contains("No query-visible source schemas are currently available."));
     }
 
     #[test]
