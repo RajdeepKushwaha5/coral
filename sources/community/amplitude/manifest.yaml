@@ -48,7 +48,7 @@ functions:
       - name: user_id
         required: true
         bind:
-          arg: user
+          arg: user_id
     request:
       method: GET
       path: /2/useractivity
@@ -176,7 +176,7 @@ functions:
           path:
             - ip_address
       - name: event_properties
-        type: Utf8
+        type: Json
         nullable: true
         description: Raw event properties as a JSON object
         expr:
@@ -184,7 +184,7 @@ functions:
           path:
             - event_properties
       - name: user_properties
-        type: Utf8
+        type: Json
         nullable: true
         description: Raw user properties snapshot at event time as a JSON object
         expr:
