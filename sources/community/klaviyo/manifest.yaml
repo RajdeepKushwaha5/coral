@@ -129,43 +129,52 @@ tables:
   - name: campaigns
     description: >-
       Klaviyo campaigns. Each row is one campaign with its name, channel,
-      status, and send time. The Klaviyo API requires a channel filter —
-      pass equals(messages.channel,"email"), equals(messages.channel,"sms"),
-      or equals(messages.channel,"mobile_push"). Returns up to 100 campaigns.
+      status, and send time. Requires a channel filter (email, sms, or
+      mobile_push) — the Klaviyo API mandates a channel selector on this
+      endpoint. Returns up to 100 campaigns per query, sorted by most recently
+      updated.
     guide: |
-      filter is required. Klaviyo's campaigns endpoint requires a channel
-      filter expression. Returns up to 100 campaigns per query.
-
-      Valid channel values: email, sms, mobile_push
+      channel is required. Valid values: email, sms, mobile_push.
+      Returns up to 100 campaigns per query (Klaviyo's page[size] maximum),
+      sorted by most recently updated.
 
       Email campaigns:
         SELECT id, name, status, channel, send_time
         FROM klaviyo.campaigns
-        WHERE filter = 'equals(messages.channel,"email")'
+        WHERE channel = 'email'
         ORDER BY send_time DESC
         LIMIT 25
 
       SMS campaigns:
         SELECT id, name, status, send_time
         FROM klaviyo.campaigns
-        WHERE filter = 'equals(messages.channel,"sms")'
+        WHERE channel = 'sms'
         ORDER BY send_time DESC
 
-      Sent email campaigns only (combine filters with AND):
+      Sent email campaigns (SQL WHERE applied after fetch):
         SELECT id, name, send_time
         FROM klaviyo.campaigns
-        WHERE filter = 'and(equals(messages.channel,"email"),equals(status,"Sent"))'
+        WHERE channel = 'email'
+          AND status = 'Sent'
+        ORDER BY send_time DESC
+
+      Email campaigns in a date range:
+        SELECT id, name, status, send_time
+        FROM klaviyo.campaigns
+        WHERE channel = 'email'
+          AND send_time >= '2024-01-01T00:00:00+00:00'
+          AND send_time < '2025-01-01T00:00:00+00:00'
         ORDER BY send_time DESC
     filters:
-      - name: filter
+      - name: channel
         required: true
     request:
       method: GET
       path: /api/campaigns/
       query:
         - name: filter
-          from: filter
-          key: filter
+          from: template
+          template: 'equals(messages.channel,"{{filter.channel}}")'
         - name: "page[size]"
           from: literal
           value: "100"
