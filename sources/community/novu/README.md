@@ -135,7 +135,7 @@ ORDER BY date DESC;
 ## Notes
 
 - All tables are strictly read-only.
-- Novu paginates all list endpoints with 0-indexed pages. Coral handles pagination automatically.
+- `novu.workflows`, `novu.subscribers`, and `novu.notifications` use 0-indexed page pagination. `novu.topics` uses the Novu v2 cursor API (`GET /v2/topics`, `after`/`limit` params) — Coral handles all pagination automatically.
 - `novu.notifications` returns Novu's internal `_subscriberId` in `subscriber_id` — join to `novu.subscribers.id` (not `subscriber_id`) to get contact details.
 - `novu.notifications.template_id` joins to `novu.workflows.id`.
 - The `channels` column is a comma-separated string. Valid values: `email`, `sms`, `push`, `in_app`, `chat`.

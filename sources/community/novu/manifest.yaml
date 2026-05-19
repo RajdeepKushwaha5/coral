@@ -276,6 +276,7 @@ tables:
       in that segment at once.
     guide: |
       No filters required. Returns all topics in the project.
+      Uses GET /v2/topics with cursor pagination (after/limit).
 
       key is the identifier used in SDK/API calls to subscribe users or
       trigger notifications. Use key values when joining with application data.
@@ -286,19 +287,19 @@ tables:
         ORDER BY name ASC
     request:
       method: GET
-      path: /v1/topics
+      path: /v2/topics
     response:
       rows_path:
         - data
     pagination:
-      mode: page
-      page_param: page
-      page_start: 0
-      page_step: 1
+      mode: cursor_query
+      cursor_param: after
+      response_cursor_path:
+        - next
       page_size:
         default: 100
         max: 100
-        query_param: pageSize
+        query_param: limit
     columns:
       - name: id
         type: Utf8
