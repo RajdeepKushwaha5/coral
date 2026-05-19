@@ -50,7 +50,7 @@ AMPLITUDE_API_KEY=your-key AMPLITUDE_SECRET_KEY=your-secret coral source add --f
 Top 20 events by total occurrences:
 
 ```sql
-SELECT name, totals, category
+SELECT value, display, totals
 FROM amplitude.events
 ORDER BY totals DESC
 LIMIT 20;
@@ -59,7 +59,7 @@ LIMIT 20;
 Active (non-deleted, non-hidden) events only:
 
 ```sql
-SELECT name, totals, category
+SELECT value, display, totals
 FROM amplitude.events
 WHERE deleted = false
   AND hidden = false
@@ -69,9 +69,9 @@ ORDER BY totals DESC;
 All project annotations:
 
 ```sql
-SELECT date, label, details
+SELECT start, label, details, category_name
 FROM amplitude.annotations
-ORDER BY date DESC;
+ORDER BY start DESC;
 ```
 
 Activity for a specific user (by Amplitude user ID):
@@ -96,7 +96,7 @@ Amplitude annotations alongside GitHub deploys — correlate release activity wi
 
 ```sql
 WITH annotations AS (
-    SELECT date, label
+    SELECT SUBSTR(start, 1, 10) AS annotation_date, label
     FROM amplitude.annotations
 ),
 deploys AS (
@@ -108,11 +108,11 @@ deploys AS (
     GROUP BY SUBSTR(merged_at, 1, 10)
 )
 SELECT
-    COALESCE(a.date, d.deploy_date) AS date,
+    COALESCE(a.annotation_date, d.deploy_date) AS date,
     d.prs_merged,
     a.label AS annotation
 FROM deploys d
-LEFT JOIN annotations a ON a.date = d.deploy_date
+LEFT JOIN annotations a ON a.annotation_date = d.deploy_date
 ORDER BY date DESC;
 ```
 
@@ -131,7 +131,7 @@ The `user_id` argument accepts three formats:
 ## Notes
 
 - All tables are strictly read-only.
-- `amplitude.events` returns all event types for the project in a single request — no pagination.
-- `amplitude.annotations` returns all annotations in a single request.
-- `amplitude.user_activity` returns up to the last 1 000 events for the specified user.
+- `amplitude.events` uses `GET /api/2/events/list` (Dashboard REST API v2). Returns all visible event types in a single request — no pagination. Hidden events are excluded by the API.
+- `amplitude.annotations` uses `GET /api/3/annotations` (Chart Annotations API v3). Returns all annotations in a single request. The `start` and `end` columns are ISO 8601 timestamps; `end` is null for single-day annotations.
+- `amplitude.user_activity` uses `GET /api/2/useractivity` and returns up to the last 1 000 events for the specified user.
 - Rate limits vary by Amplitude plan. The connector handles `429` responses automatically via `Retry-After`.

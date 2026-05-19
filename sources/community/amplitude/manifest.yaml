@@ -196,50 +196,61 @@ tables:
   - name: events
     description: >-
       All event types tracked in the Amplitude project. Returns one row per
-      event type with total occurrence counts, visibility flags, and category.
-      Use this table to discover event names before building funnels or
-      filtering user activity.
+      event type with total occurrence counts and visibility flags.
+      Uses GET /api/2/events/list (Dashboard REST API v2).
+      Use value to match event names when querying user_activity.
     guide: |
-      No filters required. Returns all event types for the project.
+      No filters required. Returns all visible event types for the project.
+
+      value is the raw event name used in user_activity queries.
+      display is the human-readable name shown in the Amplitude UI.
 
       Example:
-        SELECT name, totals, category
+        SELECT value, display, totals
         FROM amplitude.events
         ORDER BY totals DESC
         LIMIT 20
     request:
       method: GET
-      path: /3/events/list
+      path: /2/events/list
     response:
       rows_path:
         - data
     pagination:
       mode: none
     columns:
-      - name: name
+      - name: value
         type: Utf8
         nullable: false
-        description: Event type name as tracked in Amplitude
+        description: Raw event name as stored in Amplitude data
         expr:
           kind: path
           path:
-            - name
+            - value
+      - name: display
+        type: Utf8
+        nullable: true
+        description: Human-readable display name shown in the Amplitude UI
+        expr:
+          kind: path
+          path:
+            - display
       - name: totals
         type: Int64
         nullable: true
-        description: Total number of times this event has been recorded
+        description: Total event count for the current week
         expr:
           kind: path
           path:
             - totals
-      - name: totals_non_active
-        type: Int64
+      - name: non_active
+        type: Boolean
         nullable: true
-        description: Occurrences not attributed to active users
+        description: True if the event is marked inactive in Amplitude
         expr:
           kind: path
           path:
-            - totals_non_active
+            - non_active
       - name: deleted
         type: Boolean
         nullable: true
@@ -256,47 +267,35 @@ tables:
           kind: path
           path:
             - hidden
-      - name: in_waitroom
-        type: Boolean
-        nullable: true
-        description: True if the event is pending approval in the waitroom
-        expr:
-          kind: path
-          path:
-            - in_waitroom
       - name: flow_hidden
         type: Boolean
         nullable: true
-        description: True if the event is hidden from user path and flow charts
+        description: True if the event is hidden from Pathfinder and flow charts
         expr:
           kind: path
           path:
             - flow_hidden
-      - name: category
-        type: Utf8
-        nullable: true
-        description: Category assigned to the event type in Amplitude
-        expr:
-          kind: path
-          path:
-            - category
 
   - name: annotations
     description: >-
       Timeline annotation markers for the Amplitude project. Each row is one
-      annotation with a date, label, and optional details. Useful for
-      correlating metric changes with known events such as deployments,
-      marketing campaigns, or incidents.
+      annotation with start/end timestamps, label, and optional details.
+      Uses GET /api/3/annotations (Chart Annotations API v3).
+      Useful for correlating metric changes with known events such as
+      deployments, marketing campaigns, or incidents.
     guide: |
       No filters required. Returns all annotations for the project.
 
+      start and end are ISO 8601 timestamps. end is null for single-day annotations.
+      category_name is the annotation category label, or null if uncategorized.
+
       Example:
-        SELECT date, label, details
+        SELECT start, label, details, category_name
         FROM amplitude.annotations
-        ORDER BY date DESC
+        ORDER BY start DESC
     request:
       method: GET
-      path: /2/annotations
+      path: /3/annotations
     response:
       rows_path:
         - data
@@ -311,14 +310,22 @@ tables:
           kind: path
           path:
             - id
-      - name: date
+      - name: start
         type: Utf8
         nullable: false
-        description: Date of the annotation (YYYY-MM-DD)
+        description: ISO 8601 timestamp for the annotation start date
         expr:
           kind: path
           path:
-            - date
+            - start
+      - name: end
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp for the annotation end date (null for single-day annotations)
+        expr:
+          kind: path
+          path:
+            - end
       - name: label
         type: Utf8
         nullable: false
@@ -343,3 +350,12 @@ tables:
           kind: path
           path:
             - chart_id
+      - name: category_name
+        type: Utf8
+        nullable: true
+        description: Category name for this annotation (from the nested category object)
+        expr:
+          kind: path
+          path:
+            - category
+            - name
