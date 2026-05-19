@@ -27,7 +27,7 @@ inputs:
 auth:
   type: BasicAuth
   username: "{{input.CHARGEBEE_API_KEY}}"
-  password: ""
+  password: "x"
 
 rate_limit:
   extra_statuses:
