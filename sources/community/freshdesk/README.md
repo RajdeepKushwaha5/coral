@@ -114,7 +114,7 @@ Open tickets alongside related Linear issues (requires `linear` source installed
 WITH tickets AS (
     SELECT id, subject, status, created_at
     FROM freshdesk.tickets
-    WHERE filter = 'new_my_open'
+    WHERE filter = 'new_and_my_open'
 ),
 issues AS (
     SELECT id, title, state_name, created_at
