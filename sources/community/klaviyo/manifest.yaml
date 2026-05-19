@@ -42,23 +42,36 @@ tables:
   - name: lists
     description: >-
       Klaviyo subscriber lists. Each row is one list with its name and
-      opt-in configuration. Use list IDs to segment campaign audiences or
-      join with chargebee.customers for subscription-level targeting.
+      opt-in configuration. Returns up to 100 lists per query — use the
+      filter parameter to narrow results for large accounts.
     guide: |
-      No filters required. Returns up to 100 lists.
+      Optional filter parameter accepts Klaviyo filter expressions.
+      Returns up to 100 lists (Klaviyo's page[size] maximum).
 
       opt_in_process values:
         double_opt_in  — subscriber must confirm via email
         single_opt_in  — subscriber is added immediately
 
-      Example:
+      All lists (up to 100):
         SELECT id, name, opt_in_process, created
         FROM klaviyo.lists
         ORDER BY created DESC
+
+      Narrow by name:
+        SELECT id, name, opt_in_process, created
+        FROM klaviyo.lists
+        WHERE filter = 'contains(name,"newsletter")'
+        ORDER BY created DESC
+    filters:
+      - name: filter
+        required: false
     request:
       method: GET
       path: /api/lists/
       query:
+        - name: filter
+          from: filter
+          key: filter
         - name: "page[size]"
           from: literal
           value: "100"
@@ -115,26 +128,44 @@ tables:
 
   - name: campaigns
     description: >-
-      Klaviyo email and SMS campaigns. Each row is one campaign with its name,
-      channel, status, and send time. Use campaign IDs to reference audience
-      lists and track performance.
+      Klaviyo campaigns. Each row is one campaign with its name, channel,
+      status, and send time. The Klaviyo API requires a channel filter —
+      pass equals(messages.channel,"email"), equals(messages.channel,"sms"),
+      or equals(messages.channel,"mobile_push"). Returns up to 100 campaigns.
     guide: |
-      No filters required. Returns up to 100 campaigns, most recently
-      updated first.
+      filter is required. Klaviyo's campaigns endpoint requires a channel
+      filter expression. Returns up to 100 campaigns per query.
 
-      status values: Draft, Scheduled, Sending, Sent, Cancelled
-      channel values: email, sms
+      Valid channel values: email, sms, mobile_push
 
-      Example:
+      Email campaigns:
         SELECT id, name, status, channel, send_time
         FROM klaviyo.campaigns
-        WHERE status = 'Sent'
+        WHERE filter = 'equals(messages.channel,"email")'
         ORDER BY send_time DESC
         LIMIT 25
+
+      SMS campaigns:
+        SELECT id, name, status, send_time
+        FROM klaviyo.campaigns
+        WHERE filter = 'equals(messages.channel,"sms")'
+        ORDER BY send_time DESC
+
+      Sent email campaigns only (combine filters with AND):
+        SELECT id, name, send_time
+        FROM klaviyo.campaigns
+        WHERE filter = 'and(equals(messages.channel,"email"),equals(status,"Sent"))'
+        ORDER BY send_time DESC
+    filters:
+      - name: filter
+        required: true
     request:
       method: GET
       path: /api/campaigns/
       query:
+        - name: filter
+          from: filter
+          key: filter
         - name: "page[size]"
           from: literal
           value: "100"
@@ -232,21 +263,40 @@ tables:
     description: >-
       Klaviyo automation flows (sequences). Each row is one flow with its name
       and status. Flows are triggered email or SMS sequences sent to subscribers
-      based on events or list membership.
+      based on events or list membership. Returns up to 100 flows per query —
+      use the filter parameter to narrow results for large accounts.
     guide: |
-      No filters required. Returns up to 100 flows.
+      Optional filter parameter accepts Klaviyo filter expressions.
+      Returns up to 100 flows (Klaviyo's page[size] maximum).
 
       status values: draft, live, manual, archived
 
-      Example:
+      All flows (up to 100):
         SELECT id, name, status, created
         FROM klaviyo.flows
-        WHERE status = 'live'
         ORDER BY created DESC
+
+      Live flows only:
+        SELECT id, name, status, created
+        FROM klaviyo.flows
+        WHERE filter = 'equals(status,"live")'
+        ORDER BY created DESC
+
+      Narrow by name:
+        SELECT id, name, status, created
+        FROM klaviyo.flows
+        WHERE filter = 'contains(name,"welcome")'
+        ORDER BY created DESC
+    filters:
+      - name: filter
+        required: false
     request:
       method: GET
       path: /api/flows/
       query:
+        - name: filter
+          from: filter
+          key: filter
         - name: "page[size]"
           from: literal
           value: "100"
@@ -314,21 +364,35 @@ tables:
     description: >-
       Klaviyo event metric definitions. Each row is one metric type such as
       Placed Order, Opened Email, or Clicked SMS. Use metric names to
-      understand what events are tracked in the account.
+      understand what events are tracked in the account. Returns up to 100
+      metric definitions per query.
     guide: |
-      No filters required. Returns up to 100 metric definitions.
+      Optional filter parameter accepts Klaviyo filter expressions.
+      Returns up to 100 metric definitions (Klaviyo's page[size] maximum).
 
       integration.name shows the source that generates this metric
       (e.g. API, Shopify, Mailchimp).
 
-      Example:
+      All metrics (up to 100):
         SELECT id, name, integration_name, integration_category, created
         FROM klaviyo.metrics
         ORDER BY name ASC
+
+      Narrow by integration:
+        SELECT id, name, integration_name, integration_category, created
+        FROM klaviyo.metrics
+        WHERE filter = 'equals(integration.name,"Shopify")'
+        ORDER BY name ASC
+    filters:
+      - name: filter
+        required: false
     request:
       method: GET
       path: /api/metrics/
       query:
+        - name: filter
+          from: filter
+          key: filter
         - name: "page[size]"
           from: literal
           value: "100"
