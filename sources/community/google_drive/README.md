@@ -99,16 +99,6 @@ FROM google_drive.shared_drives
 LIMIT 10;
 ```
 
-### Files scoped to a shared drive
-
-```sql
-SELECT id, name, mime_type, modified_time
-FROM google_drive.files
-WHERE drive_id = '<DRIVE_ID>'
-ORDER BY modified_time DESC
-LIMIT 50;
-```
-
 ## Cross-source examples
 
 ### File owners joined with Linear assignees
