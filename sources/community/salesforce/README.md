@@ -16,7 +16,7 @@ Query Salesforce CRM accounts, contacts, leads, opportunities, and cases as SQL 
 | `salesforce.opportunities` | Deals in the sales pipeline with stage, amount, and close date | 2000 |
 | `salesforce.cases` | Customer support tickets with status, priority, and origin | 2000 |
 
-All tables return up to 2000 records ordered by `LastModifiedDate DESC`. Use SQL filters to narrow the set.
+All tables fetch up to 2000 records ordered by `LastModifiedDate DESC`. SQL `WHERE` clauses are applied client-side after fetching; queries may miss matching rows in orgs with more than 2000 records per object. Full pagination via Salesforce query locators is a planned v2 addition.
 
 ## Authentication
 
@@ -101,28 +101,15 @@ LIMIT 50;
 
 ## Cross-Source JOIN Examples
 
-Contacts with open GitHub PRs (requires `github` source):
+Contacts with open Linear issues assigned to the same person (requires `linear` source):
 
 ```sql
-SELECT c.first_name, c.last_name, c.email, COUNT(pr.id) AS open_prs
+SELECT c.first_name, c.last_name, c.email, COUNT(li.id) AS open_issues
 FROM salesforce.contacts c
-LEFT JOIN github.pull_requests pr
-  ON LOWER(pr.author_email) = LOWER(c.email)
-  AND pr.state = 'open'
+JOIN linear.issues li ON LOWER(li.assignee_email) = LOWER(c.email)
+WHERE li.state_type != 'completed'
 GROUP BY c.first_name, c.last_name, c.email
-ORDER BY open_prs DESC
-LIMIT 20;
-```
-
-Open Salesforce cases alongside open PagerDuty incidents for the same account (requires `pagerduty` source):
-
-```sql
-SELECT sf.subject AS case_subject, sf.priority, pd.title AS incident_title
-FROM salesforce.cases sf
-JOIN salesforce.contacts c ON sf.contact_id = c.id
-JOIN pagerduty.incidents pd ON LOWER(pd.user_email) = LOWER(c.email)
-WHERE sf.is_closed = false
-  AND pd.status != 'resolved'
+ORDER BY open_issues DESC
 LIMIT 20;
 ```
 
@@ -141,7 +128,7 @@ LIMIT 20;
 ## Notes
 
 - All tables are read-only.
-- Each table is backed by a SOQL query returning up to 2000 records ordered by `LastModifiedDate DESC`. For orgs with more records, use SQL filters after fetching to scope results.
+- Each table fetches up to 2000 records via a SOQL query ordered by `LastModifiedDate DESC`. SQL `WHERE` clauses run client-side after fetching, so queries filtering on fields like `is_closed` or `stage_name` may miss matching rows in orgs with more than 2000 records for that object.
 - `close_date` and `converted_date` are date-only strings (`YYYY-MM-DD`), not full timestamps.
 - `amount`, `annual_revenue`, and `probability` are returned as strings to preserve decimal precision.
 - Access tokens expire; re-run `sf org display` or re-authorize to refresh.

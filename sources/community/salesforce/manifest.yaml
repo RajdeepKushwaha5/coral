@@ -53,8 +53,9 @@ tables:
       location, and timestamps.
     guide: |
       Use account_id on contacts, opportunities, and cases to join back to this
-      table. Results are ordered by LastModifiedDate DESC and capped at 2000.
-      Add SQL filters after fetching to narrow the set for large orgs.
+      table. Results are ordered by LastModifiedDate DESC and capped at 2000 rows.
+      SQL WHERE clauses run client-side after fetching; orgs with more than 2000
+      accounts may see incomplete results when filtering.
     request:
       method: GET
       path: /services/data/v59.0/query
@@ -317,9 +318,10 @@ tables:
       accounts), up to 2000 most recently modified. Returns name, email,
       company, status, source, and conversion state.
     guide: |
-      Filter by status in SQL to scope to open or converted leads. Use email
-      to join against marketing or product analytics sources. is_converted is
-      true once the lead has been converted to an Account and Contact.
+      is_converted is true once the lead has been converted to an Account and
+      Contact. Use email to join against marketing or product analytics sources.
+      SQL filters on status and is_converted run client-side after fetching up
+      to 2000 rows; orgs with more than 2000 leads may see incomplete results.
     request:
       method: GET
       path: /services/data/v59.0/query
@@ -487,9 +489,10 @@ tables:
       most recently modified. Returns stage, amount, close date, account, and
       win/loss state.
     guide: |
-      Filter by is_closed = false in SQL for open pipeline. Join account_id
-      with salesforce.accounts to get company context. close_date is a
-      YYYY-MM-DD string; cast to DATE for date arithmetic.
+      Join account_id with salesforce.accounts to get company context.
+      close_date is a YYYY-MM-DD string; cast to DATE for date arithmetic.
+      SQL filters on is_closed and stage_name run client-side after fetching up
+      to 2000 rows; orgs with large pipelines may see incomplete results.
     request:
       method: GET
       path: /services/data/v59.0/query
@@ -633,9 +636,9 @@ tables:
       contact, and timestamps.
     guide: |
       Join account_id with salesforce.accounts and contact_id with
-      salesforce.contacts to get full customer context. Filter by
-      is_closed = false for open cases. Join contact_id email against
-      PagerDuty or Freshdesk for cross-source support intelligence.
+      salesforce.contacts to get full customer context. SQL filters such as
+      is_closed = false run client-side after fetching up to 2000 rows; orgs
+      with large case volumes may see incomplete results when filtering.
     request:
       method: GET
       path: /services/data/v59.0/query
