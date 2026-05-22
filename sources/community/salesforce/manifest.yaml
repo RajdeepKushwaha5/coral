@@ -329,6 +329,7 @@ tables:
           value: >-
             SELECT Id,FirstName,LastName,Email,Company,Status,LeadSource,
             Industry,Phone,OwnerId,IsConverted,ConvertedDate,
+            ConvertedAccountId,ConvertedContactId,ConvertedOpportunityId,
             CreatedDate,LastModifiedDate FROM Lead
             ORDER BY LastModifiedDate DESC LIMIT 2000
     response:
@@ -433,6 +434,30 @@ tables:
           kind: path
           path:
             - ConvertedDate
+      - name: converted_account_id
+        type: Utf8
+        nullable: true
+        description: ID of the Account created on conversion; join with salesforce.accounts.
+        expr:
+          kind: path
+          path:
+            - ConvertedAccountId
+      - name: converted_contact_id
+        type: Utf8
+        nullable: true
+        description: ID of the Contact created on conversion; join with salesforce.contacts.
+        expr:
+          kind: path
+          path:
+            - ConvertedContactId
+      - name: converted_opportunity_id
+        type: Utf8
+        nullable: true
+        description: ID of the Opportunity created on conversion; join with salesforce.opportunities.
+        expr:
+          kind: path
+          path:
+            - ConvertedOpportunityId
       - name: created_date
         type: Timestamp
         nullable: true
