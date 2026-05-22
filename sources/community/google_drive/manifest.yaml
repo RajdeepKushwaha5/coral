@@ -89,11 +89,17 @@ tables:
       `LIMIT` on large drives. The `q` filter uses Drive query syntax, not SQL;
       see https://developers.google.com/drive/api/guides/search-files for
       supported fields and operators.
+
+      To scope results to a specific shared drive, set both `drive_id` and
+      `corpora = 'drive'`. Without `drive_id`, omit `corpora` or set it to
+      `allDrives` to search across My Drive and all shared drives.
     fetch_limit_default: 100
     filters:
       - name: q
         required: false
       - name: drive_id
+        required: false
+      - name: corpora
         required: false
     request:
       method: GET
@@ -117,8 +123,8 @@ tables:
           from: filter
           key: drive_id
         - name: corpora
-          from: literal
-          value: allDrives
+          from: filter
+          key: corpora
     response:
       rows_path:
         - files
@@ -193,27 +199,21 @@ tables:
             - "0"
             - emailAddress
       - name: shared
-        type: Utf8
+        type: Boolean
         nullable: true
-        description: String true when the file is shared with other users.
+        description: True when the file is shared with other users.
         expr:
-          kind: if_present
-          check:
-            kind: path
-            path:
-              - shared
-          then_value: "true"
+          kind: path
+          path:
+            - shared
       - name: trashed
-        type: Utf8
+        type: Boolean
         nullable: true
-        description: String true when the file is in the trash.
+        description: True when the file is in the trash.
         expr:
-          kind: if_present
-          check:
-            kind: path
-            path:
-              - trashed
-          then_value: "true"
+          kind: path
+          path:
+            - trashed
       - name: web_view_link
         type: Utf8
         nullable: true

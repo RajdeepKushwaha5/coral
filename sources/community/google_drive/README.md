@@ -110,7 +110,7 @@ WHERE li.state_type != 'completed'
 LIMIT 30;
 ```
 
-### Google Docs modified by the same engineer who merged a recent PR
+### Google Docs modified by the same engineer who authored a recent PR
 
 ```sql
 SELECT f.name, f.modified_time, f.web_view_link, pr.merged_by
