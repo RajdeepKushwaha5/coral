@@ -33,7 +33,7 @@ inputs:
               type: authorization_code
               pkce: required
             redirect_uri: http://127.0.0.1/oauth/callback
-            redirect_uri_port: random
+            redirect_uri_port_mode: random
             endpoints:
               authorization_url: https://accounts.google.com/o/oauth2/v2/auth
               token_url: https://oauth2.googleapis.com/token
@@ -91,6 +91,13 @@ tables:
         corpora = 'allDrives'         — My Drive + all shared drives (recommended default)
         corpora = 'drive'             — one specific shared drive; requires `drive_id`
 
+      Drive returns trashed files unless you exclude them in `q`:
+        q = 'trashed = false'
+
+      Use `order_by` to sort results at the API level (not just the fetched page).
+      Supported values: modifiedTime, createdTime, name, recency, quotaBytesUsed.
+      Append ' desc' for descending: order_by = 'modifiedTime desc'
+
       The `q` filter uses Drive query syntax, not SQL. See
       https://developers.google.com/drive/api/guides/search-files for
       supported fields and operators. Always use `LIMIT` on large drives.
@@ -101,6 +108,8 @@ tables:
       - name: drive_id
         required: false
       - name: corpora
+        required: false
+      - name: order_by
         required: false
     request:
       method: GET
@@ -126,6 +135,9 @@ tables:
         - name: corpora
           from: filter
           key: corpora
+        - name: orderBy
+          from: filter
+          key: order_by
     response:
       rows_path:
         - files
@@ -136,7 +148,7 @@ tables:
         - nextPageToken
       page_size:
         default: 100
-        max: 1000
+        max: 100
         query_param: pageSize
     columns:
       - name: id
@@ -362,16 +374,13 @@ tables:
             - lastModifyingUser
             - emailAddress
       - name: shared
-        type: Utf8
+        type: Boolean
         nullable: true
-        description: String true when the file is shared with other users.
+        description: True when the file is shared with other users.
         expr:
-          kind: if_present
-          check:
-            kind: path
-            path:
-              - shared
-          then_value: "true"
+          kind: path
+          path:
+            - shared
       - name: web_view_link
         type: Utf8
         nullable: true
@@ -447,13 +456,10 @@ tables:
           path:
             - createdTime
       - name: hidden
-        type: Utf8
+        type: Boolean
         nullable: true
-        description: String true when the drive is hidden from the default view.
+        description: True when the drive is hidden from the default view.
         expr:
-          kind: if_present
-          check:
-            kind: path
-            path:
-              - hidden
-          then_value: "true"
+          kind: path
+          path:
+            - hidden

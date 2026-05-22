@@ -67,7 +67,7 @@ not SQL — for example `mimeType = "application/pdf"` or
 SELECT id, name, mime_type, modified_time, web_view_link
 FROM google_drive.files
 WHERE corpora = 'allDrives'
-  AND q = 'modifiedTime > "2026-05-01T00:00:00"'
+  AND q = 'trashed = false and modifiedTime > "2026-05-01T00:00:00"'
 ORDER BY modified_time DESC
 LIMIT 20;
 ```
@@ -114,11 +114,11 @@ LIMIT 30;
 ### Google Docs modified by the same engineer who authored a recent PR
 
 ```sql
-SELECT f.name, f.modified_time, f.web_view_link, pr.merged_by
+SELECT f.name, f.modified_time, f.web_view_link, pr.merged_by__login
 FROM google_drive.files f
-JOIN github.pull_requests pr ON LOWER(f.owner_email) = LOWER(pr.author_email)
-WHERE pr.state = 'closed'
-  AND pr.merged_at >= '2026-05-01T00:00:00Z'
+JOIN github.pulls pr
+  ON SPLIT_PART(f.owner_email, '@', 1) = pr.user__login
+WHERE pr.merged_at >= '2026-05-01T00:00:00Z'
 LIMIT 20;
 ```
 
