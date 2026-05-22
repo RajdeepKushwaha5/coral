@@ -79,20 +79,21 @@ test_queries:
 tables:
   - name: files
     description: >-
-      Lists files and folders accessible to the authenticated user across My
-      Drive and shared drives. Supports an optional `q` filter using Drive
-      query syntax (for example `mimeType = "application/pdf"` or
-      `modifiedTime > "2026-01-01T00:00:00"`) and an optional `drive_id`
-      filter to scope results to a specific shared drive.
+      Lists files and folders accessible to the authenticated user. Always set
+      the `corpora` filter to control which drives are searched: use
+      `allDrives` to include My Drive and all shared drives, or `drive` when
+      scoping to a specific shared drive with `drive_id`. Omitting `corpora`
+      causes the Drive API to default to the narrower `user` corpus and may
+      silently exclude shared-drive files. Supports an optional `q` filter
+      using Drive query syntax.
     guide: |
-      Start here to discover file IDs for use with `file_info`. Always use
-      `LIMIT` on large drives. The `q` filter uses Drive query syntax, not SQL;
-      see https://developers.google.com/drive/api/guides/search-files for
-      supported fields and operators.
+      Always set `corpora` explicitly:
+        corpora = 'allDrives'         — My Drive + all shared drives (recommended default)
+        corpora = 'drive'             — one specific shared drive; requires `drive_id`
 
-      To scope results to a specific shared drive, set both `drive_id` and
-      `corpora = 'drive'`. Without `drive_id`, omit `corpora` or set it to
-      `allDrives` to search across My Drive and all shared drives.
+      The `q` filter uses Drive query syntax, not SQL. See
+      https://developers.google.com/drive/api/guides/search-files for
+      supported fields and operators. Always use `LIMIT` on large drives.
     fetch_limit_default: 100
     filters:
       - name: q

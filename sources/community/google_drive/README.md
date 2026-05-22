@@ -61,14 +61,25 @@ not SQL — for example `mimeType = "application/pdf"` or
 
 ## Example queries
 
-### List recently modified files
+### List recently modified files (all drives)
 
 ```sql
 SELECT id, name, mime_type, modified_time, web_view_link
 FROM google_drive.files
-WHERE q = 'modifiedTime > "2026-05-01T00:00:00"'
+WHERE corpora = 'allDrives'
+  AND q = 'modifiedTime > "2026-05-01T00:00:00"'
 ORDER BY modified_time DESC
 LIMIT 20;
+```
+
+### Files in a specific shared drive
+
+```sql
+SELECT id, name, mime_type, modified_time
+FROM google_drive.files
+WHERE corpora = 'drive'
+  AND drive_id = 'YOUR_SHARED_DRIVE_ID'
+LIMIT 50;
 ```
 
 ### Full metadata for one file
