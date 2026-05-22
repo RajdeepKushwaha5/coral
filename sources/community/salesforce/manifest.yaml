@@ -1,0 +1,731 @@
+name: salesforce
+version: 0.1.0
+dsl_version: 3
+backend: http
+description: >-
+  Query Salesforce CRM accounts, contacts, leads, opportunities, and cases
+  via the Salesforce REST API v59.0. Join with GitHub PRs, Linear issues,
+  and PagerDuty incidents for cross-source sales and support intelligence.
+
+base_url: "{{input.SALESFORCE_API_URL}}"
+
+inputs:
+  SALESFORCE_API_URL:
+    kind: variable
+    hint: |
+      Your Salesforce instance URL without a trailing slash.
+      Example: https://mycompany.my.salesforce.com
+      Find it in Salesforce under Setup → Company Information → Instance URL.
+  SALESFORCE_ACCESS_TOKEN:
+    kind: secret
+    hint: |
+      A Salesforce connected app access token. To generate one:
+        1. Create a Connected App under Setup → App Manager → New Connected App.
+        2. Enable OAuth settings with the api scope.
+        3. Retrieve a token via the Username-Password flow or Salesforce CLI:
+           sf org display --target-org <alias>
+      See https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/quickstart_oauth.htm
+
+auth:
+  type: HeaderAuth
+  headers:
+    - name: Authorization
+      from: template
+      template: Bearer {{input.SALESFORCE_ACCESS_TOKEN}}
+
+request_headers:
+  - name: Accept
+    from: literal
+    value: application/json
+
+rate_limit:
+  extra_statuses:
+    - 429
+
+test_queries:
+  - SELECT id, name FROM salesforce.accounts LIMIT 1
+
+tables:
+  - name: accounts
+    description: >-
+      Salesforce account records (companies and organizations), up to 2000 most
+      recently modified. Returns name, type, industry, revenue, owner, billing
+      location, and timestamps.
+    guide: |
+      Use account_id on contacts, opportunities, and cases to join back to this
+      table. Results are ordered by LastModifiedDate DESC and capped at 2000.
+      Add SQL filters after fetching to narrow the set for large orgs.
+    request:
+      method: GET
+      path: /services/data/v59.0/query
+      query:
+        - name: q
+          from: literal
+          value: >-
+            SELECT Id,Name,Type,Industry,AnnualRevenue,NumberOfEmployees,
+            Phone,Website,BillingCity,BillingCountry,OwnerId,
+            CreatedDate,LastModifiedDate FROM Account
+            ORDER BY LastModifiedDate DESC LIMIT 2000
+    response:
+      rows_path:
+        - records
+    pagination:
+      mode: none
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Salesforce Account ID (18-character).
+        expr:
+          kind: path
+          path:
+            - Id
+      - name: name
+        type: Utf8
+        nullable: true
+        description: Account name.
+        expr:
+          kind: path
+          path:
+            - Name
+      - name: type
+        type: Utf8
+        nullable: true
+        description: Account type (Customer, Partner, Prospect, etc.).
+        expr:
+          kind: path
+          path:
+            - Type
+      - name: industry
+        type: Utf8
+        nullable: true
+        description: Industry vertical.
+        expr:
+          kind: path
+          path:
+            - Industry
+      - name: annual_revenue
+        type: Utf8
+        nullable: true
+        description: Annual revenue in account currency.
+        expr:
+          kind: path
+          path:
+            - AnnualRevenue
+      - name: number_of_employees
+        type: Int64
+        nullable: true
+        description: Number of employees.
+        expr:
+          kind: path
+          path:
+            - NumberOfEmployees
+      - name: phone
+        type: Utf8
+        nullable: true
+        description: Primary phone number.
+        expr:
+          kind: path
+          path:
+            - Phone
+      - name: website
+        type: Utf8
+        nullable: true
+        description: Account website URL.
+        expr:
+          kind: path
+          path:
+            - Website
+      - name: billing_city
+        type: Utf8
+        nullable: true
+        description: Billing address city.
+        expr:
+          kind: path
+          path:
+            - BillingCity
+      - name: billing_country
+        type: Utf8
+        nullable: true
+        description: Billing address country.
+        expr:
+          kind: path
+          path:
+            - BillingCountry
+      - name: owner_id
+        type: Utf8
+        nullable: true
+        description: Salesforce User ID of the account owner.
+        expr:
+          kind: path
+          path:
+            - OwnerId
+      - name: created_date
+        type: Timestamp
+        nullable: true
+        description: Timestamp when the account was created.
+        expr:
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - CreatedDate
+      - name: last_modified_date
+        type: Timestamp
+        nullable: true
+        description: Timestamp when the account was last modified.
+        expr:
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - LastModifiedDate
+
+  - name: contacts
+    description: >-
+      Salesforce contact records (individuals associated with accounts), up to
+      2000 most recently modified. Returns name, email, phone, account, owner,
+      and timestamps. Primary join key with external sources is email.
+    guide: |
+      Join on email with GitHub PR authors, Linear assignees, and PagerDuty
+      users for cross-source identity resolution. Use account_id to join with
+      salesforce.accounts.
+    request:
+      method: GET
+      path: /services/data/v59.0/query
+      query:
+        - name: q
+          from: literal
+          value: >-
+            SELECT Id,FirstName,LastName,Email,Phone,MobilePhone,Title,
+            Department,AccountId,OwnerId,CreatedDate,LastModifiedDate
+            FROM Contact ORDER BY LastModifiedDate DESC LIMIT 2000
+    response:
+      rows_path:
+        - records
+    pagination:
+      mode: none
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Salesforce Contact ID (18-character).
+        expr:
+          kind: path
+          path:
+            - Id
+      - name: first_name
+        type: Utf8
+        nullable: true
+        description: Contact first name.
+        expr:
+          kind: path
+          path:
+            - FirstName
+      - name: last_name
+        type: Utf8
+        nullable: true
+        description: Contact last name.
+        expr:
+          kind: path
+          path:
+            - LastName
+      - name: email
+        type: Utf8
+        nullable: true
+        description: Contact email address; primary join key with external sources.
+        expr:
+          kind: path
+          path:
+            - Email
+      - name: phone
+        type: Utf8
+        nullable: true
+        description: Business phone number.
+        expr:
+          kind: path
+          path:
+            - Phone
+      - name: mobile_phone
+        type: Utf8
+        nullable: true
+        description: Mobile phone number.
+        expr:
+          kind: path
+          path:
+            - MobilePhone
+      - name: title
+        type: Utf8
+        nullable: true
+        description: Job title.
+        expr:
+          kind: path
+          path:
+            - Title
+      - name: department
+        type: Utf8
+        nullable: true
+        description: Department.
+        expr:
+          kind: path
+          path:
+            - Department
+      - name: account_id
+        type: Utf8
+        nullable: true
+        description: ID of the parent account; join with salesforce.accounts.
+        expr:
+          kind: path
+          path:
+            - AccountId
+      - name: owner_id
+        type: Utf8
+        nullable: true
+        description: Salesforce User ID of the contact owner.
+        expr:
+          kind: path
+          path:
+            - OwnerId
+      - name: created_date
+        type: Timestamp
+        nullable: true
+        description: Timestamp when the contact was created.
+        expr:
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - CreatedDate
+      - name: last_modified_date
+        type: Timestamp
+        nullable: true
+        description: Timestamp when the contact was last modified.
+        expr:
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - LastModifiedDate
+
+  - name: leads
+    description: >-
+      Salesforce lead records (prospective contacts not yet converted to
+      accounts), up to 2000 most recently modified. Returns name, email,
+      company, status, source, and conversion state.
+    guide: |
+      Filter by status in SQL to scope to open or converted leads. Use email
+      to join against marketing or product analytics sources. is_converted is
+      true once the lead has been converted to an Account and Contact.
+    request:
+      method: GET
+      path: /services/data/v59.0/query
+      query:
+        - name: q
+          from: literal
+          value: >-
+            SELECT Id,FirstName,LastName,Email,Company,Status,LeadSource,
+            Industry,Phone,OwnerId,IsConverted,ConvertedDate,
+            CreatedDate,LastModifiedDate FROM Lead
+            ORDER BY LastModifiedDate DESC LIMIT 2000
+    response:
+      rows_path:
+        - records
+    pagination:
+      mode: none
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Salesforce Lead ID (18-character).
+        expr:
+          kind: path
+          path:
+            - Id
+      - name: first_name
+        type: Utf8
+        nullable: true
+        description: Lead first name.
+        expr:
+          kind: path
+          path:
+            - FirstName
+      - name: last_name
+        type: Utf8
+        nullable: true
+        description: Lead last name.
+        expr:
+          kind: path
+          path:
+            - LastName
+      - name: email
+        type: Utf8
+        nullable: true
+        description: Lead email address.
+        expr:
+          kind: path
+          path:
+            - Email
+      - name: company
+        type: Utf8
+        nullable: true
+        description: Company name the lead is associated with.
+        expr:
+          kind: path
+          path:
+            - Company
+      - name: status
+        type: Utf8
+        nullable: true
+        description: Lead status (Open, Working, Closed, Converted, etc.).
+        expr:
+          kind: path
+          path:
+            - Status
+      - name: lead_source
+        type: Utf8
+        nullable: true
+        description: Origin channel (Web, Phone, Partner, etc.).
+        expr:
+          kind: path
+          path:
+            - LeadSource
+      - name: industry
+        type: Utf8
+        nullable: true
+        description: Industry vertical.
+        expr:
+          kind: path
+          path:
+            - Industry
+      - name: phone
+        type: Utf8
+        nullable: true
+        description: Lead phone number.
+        expr:
+          kind: path
+          path:
+            - Phone
+      - name: owner_id
+        type: Utf8
+        nullable: true
+        description: Salesforce User ID of the lead owner.
+        expr:
+          kind: path
+          path:
+            - OwnerId
+      - name: is_converted
+        type: Boolean
+        nullable: true
+        description: True when the lead has been converted to an Account and Contact.
+        expr:
+          kind: path
+          path:
+            - IsConverted
+      - name: converted_date
+        type: Utf8
+        nullable: true
+        description: Date the lead was converted (YYYY-MM-DD).
+        expr:
+          kind: path
+          path:
+            - ConvertedDate
+      - name: created_date
+        type: Timestamp
+        nullable: true
+        description: Timestamp when the lead was created.
+        expr:
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - CreatedDate
+      - name: last_modified_date
+        type: Timestamp
+        nullable: true
+        description: Timestamp when the lead was last modified.
+        expr:
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - LastModifiedDate
+
+  - name: opportunities
+    description: >-
+      Salesforce opportunity records (deals in the sales pipeline), up to 2000
+      most recently modified. Returns stage, amount, close date, account, and
+      win/loss state.
+    guide: |
+      Filter by is_closed = false in SQL for open pipeline. Join account_id
+      with salesforce.accounts to get company context. close_date is a
+      YYYY-MM-DD string; cast to DATE for date arithmetic.
+    request:
+      method: GET
+      path: /services/data/v59.0/query
+      query:
+        - name: q
+          from: literal
+          value: >-
+            SELECT Id,Name,AccountId,StageName,Amount,CloseDate,IsClosed,
+            IsWon,Probability,Type,LeadSource,OwnerId,
+            CreatedDate,LastModifiedDate FROM Opportunity
+            ORDER BY LastModifiedDate DESC LIMIT 2000
+    response:
+      rows_path:
+        - records
+    pagination:
+      mode: none
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Salesforce Opportunity ID (18-character).
+        expr:
+          kind: path
+          path:
+            - Id
+      - name: name
+        type: Utf8
+        nullable: true
+        description: Opportunity name.
+        expr:
+          kind: path
+          path:
+            - Name
+      - name: account_id
+        type: Utf8
+        nullable: true
+        description: ID of the associated account; join with salesforce.accounts.
+        expr:
+          kind: path
+          path:
+            - AccountId
+      - name: stage_name
+        type: Utf8
+        nullable: true
+        description: Current pipeline stage (Prospecting, Proposal, Closed Won, etc.).
+        expr:
+          kind: path
+          path:
+            - StageName
+      - name: amount
+        type: Utf8
+        nullable: true
+        description: Deal value in account currency.
+        expr:
+          kind: path
+          path:
+            - Amount
+      - name: close_date
+        type: Utf8
+        nullable: true
+        description: Expected or actual close date (YYYY-MM-DD).
+        expr:
+          kind: path
+          path:
+            - CloseDate
+      - name: is_closed
+        type: Boolean
+        nullable: true
+        description: True when the opportunity is closed (won or lost).
+        expr:
+          kind: path
+          path:
+            - IsClosed
+      - name: is_won
+        type: Boolean
+        nullable: true
+        description: True when the opportunity was closed as won.
+        expr:
+          kind: path
+          path:
+            - IsWon
+      - name: probability
+        type: Utf8
+        nullable: true
+        description: Probability of winning as a percentage (0-100).
+        expr:
+          kind: path
+          path:
+            - Probability
+      - name: type
+        type: Utf8
+        nullable: true
+        description: Opportunity type (New Business, Renewal, etc.).
+        expr:
+          kind: path
+          path:
+            - Type
+      - name: lead_source
+        type: Utf8
+        nullable: true
+        description: Origin channel for the opportunity.
+        expr:
+          kind: path
+          path:
+            - LeadSource
+      - name: owner_id
+        type: Utf8
+        nullable: true
+        description: Salesforce User ID of the opportunity owner.
+        expr:
+          kind: path
+          path:
+            - OwnerId
+      - name: created_date
+        type: Timestamp
+        nullable: true
+        description: Timestamp when the opportunity was created.
+        expr:
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - CreatedDate
+      - name: last_modified_date
+        type: Timestamp
+        nullable: true
+        description: Timestamp when the opportunity was last modified.
+        expr:
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - LastModifiedDate
+
+  - name: cases
+    description: >-
+      Salesforce case records (customer support tickets), up to 2000 most
+      recently modified. Returns subject, status, priority, origin, account,
+      contact, and timestamps.
+    guide: |
+      Join account_id with salesforce.accounts and contact_id with
+      salesforce.contacts to get full customer context. Filter by
+      is_closed = false for open cases. Join contact_id email against
+      PagerDuty or Freshdesk for cross-source support intelligence.
+    request:
+      method: GET
+      path: /services/data/v59.0/query
+      query:
+        - name: q
+          from: literal
+          value: >-
+            SELECT Id,Subject,Status,Priority,Origin,Type,AccountId,
+            ContactId,OwnerId,IsClosed,CreatedDate,LastModifiedDate
+            FROM Case ORDER BY LastModifiedDate DESC LIMIT 2000
+    response:
+      rows_path:
+        - records
+    pagination:
+      mode: none
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Salesforce Case ID (18-character).
+        expr:
+          kind: path
+          path:
+            - Id
+      - name: subject
+        type: Utf8
+        nullable: true
+        description: Case subject line.
+        expr:
+          kind: path
+          path:
+            - Subject
+      - name: status
+        type: Utf8
+        nullable: true
+        description: Case status (New, Working, Escalated, Closed, etc.).
+        expr:
+          kind: path
+          path:
+            - Status
+      - name: priority
+        type: Utf8
+        nullable: true
+        description: Case priority (Low, Medium, High, Critical).
+        expr:
+          kind: path
+          path:
+            - Priority
+      - name: origin
+        type: Utf8
+        nullable: true
+        description: Case origin channel (Email, Phone, Web, etc.).
+        expr:
+          kind: path
+          path:
+            - Origin
+      - name: type
+        type: Utf8
+        nullable: true
+        description: Case type (Question, Problem, Feature Request, etc.).
+        expr:
+          kind: path
+          path:
+            - Type
+      - name: account_id
+        type: Utf8
+        nullable: true
+        description: ID of the associated account; join with salesforce.accounts.
+        expr:
+          kind: path
+          path:
+            - AccountId
+      - name: contact_id
+        type: Utf8
+        nullable: true
+        description: ID of the associated contact; join with salesforce.contacts.
+        expr:
+          kind: path
+          path:
+            - ContactId
+      - name: owner_id
+        type: Utf8
+        nullable: true
+        description: Salesforce User ID of the case owner.
+        expr:
+          kind: path
+          path:
+            - OwnerId
+      - name: is_closed
+        type: Boolean
+        nullable: true
+        description: True when the case is closed.
+        expr:
+          kind: path
+          path:
+            - IsClosed
+      - name: created_date
+        type: Timestamp
+        nullable: true
+        description: Timestamp when the case was created.
+        expr:
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - CreatedDate
+      - name: last_modified_date
+        type: Timestamp
+        nullable: true
+        description: Timestamp when the case was last modified.
+        expr:
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - LastModifiedDate
