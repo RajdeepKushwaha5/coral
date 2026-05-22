@@ -45,7 +45,7 @@ test_queries:
 tables:
   - name: boards
     description: >-
-      Lists all active monday.com boards accessible to the authenticated token.
+      Active monday.com boards accessible to the authenticated token, up to 500.
       Returns board ID, name, description, kind (public/private/share), state,
       and workspace metadata.
     guide: |
@@ -152,7 +152,7 @@ tables:
 
   - name: users
     description: >-
-      Lists all non-guest users in the monday.com account. Returns user ID,
+      Non-guest users in the monday.com account, up to 500. Returns user ID,
       name, email, title, role flags, time zone, and creation timestamp.
     guide: |
       Use `email` to join with GitHub PR authors, Linear assignees, and
@@ -205,7 +205,7 @@ tables:
           path:
             - title
       - name: is_admin
-        type: Json
+        type: Boolean
         nullable: true
         description: True when the user has account admin permissions.
         expr:
@@ -213,7 +213,7 @@ tables:
           path:
             - is_admin
       - name: is_guest
-        type: Json
+        type: Boolean
         nullable: true
         description: True when the user is a guest account.
         expr:
@@ -221,7 +221,7 @@ tables:
           path:
             - is_guest
       - name: enabled
-        type: Json
+        type: Boolean
         nullable: true
         description: True when the user account is active and not deactivated.
         expr:
@@ -276,7 +276,8 @@ functions:
       body:
         query: >-
           { boards(ids: [{{arg.board_id}}]) { items_page(limit: 500) { items
-          { id name state created_at updated_at group { id title } } } } }
+          { id name state created_at updated_at group { id title }
+          column_values { id text value } } } } }
     response:
       rows_path:
         - data
@@ -348,7 +349,10 @@ functions:
       - name: raw
         type: Json
         nullable: true
-        description: Raw item object including all column values.
+        description: >-
+          Raw item object including column_values array with id, text, and
+          value for each column. Use DataFusion JSON functions to extract
+          specific column values.
         expr:
           kind: current_row
 

@@ -87,18 +87,14 @@ ORDER BY name;
 
 ## Cross-source examples
 
-### Engineers with open GitHub PRs and active monday.com items
+### Engineers with open GitHub PRs
 
 ```sql
-SELECT u.name, u.email,
-       COUNT(DISTINCT pr.id) AS open_prs,
-       COUNT(DISTINCT mi.id) AS active_items
+SELECT u.name, u.email, COUNT(DISTINCT pr.id) AS open_prs
 FROM monday.users u
 LEFT JOIN github.pull_requests pr
   ON LOWER(pr.author_login) = LOWER(SPLIT_PART(u.email, '@', 1))
   AND pr.state = 'open'
-LEFT JOIN monday.board_items('BOARD_ID') mi
-  ON mi.state = 'active'
 GROUP BY u.name, u.email
 ORDER BY open_prs DESC
 LIMIT 20;
