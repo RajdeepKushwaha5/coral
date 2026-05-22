@@ -3,7 +3,7 @@ version: 0.1.0
 dsl_version: 3
 backend: http
 description: >-
-  Query Dynatrace problems, entities, releases, and events via the Dynatrace
+  Query Dynatrace problems, entities, and releases via the Dynatrace
   Environment API v2. Join with GitHub deploys, Sentry errors, and PagerDuty
   incidents for cross-source SRE and observability intelligence.
 base_url: "{{input.DYNATRACE_BASE_URL}}"
@@ -22,7 +22,6 @@ inputs:
         - problems.read
         - entities.read
         - releases.read
-        - events.read
 
       Generate one in Dynatrace under Access Tokens → Generate new token.
       See https://docs.dynatrace.com/docs/dynatrace-api/basics/dynatrace-api-authentication
