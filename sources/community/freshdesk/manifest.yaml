@@ -4,9 +4,8 @@ dsl_version: 3
 backend: http
 description: >-
   Query Freshdesk support tickets, contacts, agents, and groups as SQL tables.
-  Filter tickets by status, priority, or recency. Expand individual ticket
-  conversations. Join with Linear, GitHub, or Notion for cross-source
-  support intelligence.
+  Search tickets by status and priority. Expand individual ticket conversations.
+  Join with Linear, GitHub, or Notion for cross-source support intelligence.
 
 base_url: "https://{{input.FRESHDESK_DOMAIN}}.freshdesk.com"
 
@@ -39,8 +38,10 @@ test_queries:
 functions:
   - name: conversations
     description: >-
-      All replies and private notes for a specific ticket. Pass the numeric
-      ticket ID to expand the full conversation thread.
+      All replies and private notes for a specific ticket. Returns agent replies
+      and internal notes only — the original ticket description is not included
+      here; access it via the `description_text` column on `freshdesk.tickets`
+      (use `include=description` filter). Pass the numeric ticket ID.
     fetch_limit_default: 100
     args:
       - name: ticket_id
@@ -73,7 +74,7 @@ functions:
       - name: ticket_id
         type: Int64
         nullable: true
-        description: Ticket this conversation belongs to
+        description: Ticket this conversation entry belongs to
         expr:
           kind: path
           path:
@@ -119,44 +120,55 @@ functions:
           path:
             - support_email
       - name: created_at
-        type: Utf8
+        type: Timestamp
         nullable: true
-        description: ISO 8601 timestamp when the entry was created
+        description: Timestamp when the entry was created
         expr:
-          kind: path
-          path:
-            - created_at
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - created_at
       - name: updated_at
-        type: Utf8
+        type: Timestamp
         nullable: true
-        description: ISO 8601 timestamp when the entry was last updated
+        description: Timestamp when the entry was last updated
         expr:
-          kind: path
-          path:
-            - updated_at
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - updated_at
 
 tables:
   - name: tickets
     description: >-
-      Freshdesk support tickets. Each row is one ticket with status, priority,
-      requester, assignee, and timestamps. Filter by `updated_since` to fetch
-      recently changed tickets, or by `filter` to use a named Freshdesk view.
-      Use `freshdesk.conversations` to expand individual ticket threads.
+      Freshdesk support tickets from the last 30 days (Freshdesk API default).
+      Each row is one ticket with status, priority, SLA timestamps, assignment,
+      and tags. Use `filter` for named views (new_and_my_open, watching, spam,
+      deleted) or `updated_since` for recency. For status/priority filtering
+      across all tickets use `freshdesk.search_tickets`.
     guide: |
-      No required filters. Useful filters:
-        updated_since — ISO 8601 datetime (e.g. '2024-01-01T00:00:00Z')
-        filter        — named view: new_and_my_open, watching, spam, deleted
-                        (omit to return all tickets)
+      No required filters. The Freshdesk list-tickets endpoint returns tickets
+      created in the last 30 days by default — it does not support status or
+      priority as API-level query parameters. To filter by status or priority
+      at the API level (across all time), use `freshdesk.search_tickets` with
+      Freshdesk filter query syntax.
 
-      Status values: 2=Open, 3=Pending, 4=Resolved, 5=Closed
-      Priority values: 1=Low, 2=Medium, 3=High, 4=Urgent
+      Available filters:
+        filter       — named view: new_and_my_open, watching, spam, deleted
+        updated_since — ISO 8601 datetime, e.g. '2024-01-01T00:00:00Z'
+        order_by     — field to sort by (default: created_at)
+        order_type   — asc or desc
 
-      Example:
-        SELECT id, subject, status, priority, created_at
-        FROM freshdesk.tickets
-        WHERE filter = 'new_and_my_open'
-        ORDER BY created_at DESC
-        LIMIT 25
+      To include the original ticket description add the `include` filter:
+        WHERE include = 'description'
+      This populates the description_text column.
+
+      Status codes: 2=Open, 3=Pending, 4=Resolved, 5=Closed
+      Priority codes: 1=Low, 2=Medium, 3=High, 4=Urgent
     filters:
       - name: filter
         required: false
@@ -165,6 +177,8 @@ tables:
       - name: order_by
         required: false
       - name: order_type
+        required: false
+      - name: include
         required: false
     request:
       method: GET
@@ -182,6 +196,9 @@ tables:
         - name: order_type
           from: filter
           key: order_type
+        - name: include
+          from: filter
+          key: include
     response:
       row_strategy: direct
     pagination:
@@ -210,6 +227,16 @@ tables:
           kind: path
           path:
             - subject
+      - name: description_text
+        type: Utf8
+        nullable: true
+        description: >-
+          Plain-text version of the original ticket description. Populated only
+          when the `include` filter is set to `description`.
+        expr:
+          kind: path
+          path:
+            - description_text
       - name: status
         type: Int64
         nullable: true
@@ -229,7 +256,7 @@ tables:
       - name: type
         type: Utf8
         nullable: true
-        description: Ticket type (e.g. Question, Incident, Problem, Feature Request)
+        description: Ticket type (for example Question, Incident, Problem, Feature Request)
         expr:
           kind: path
           path:
@@ -307,37 +334,220 @@ tables:
           path:
             - fr_escalated
       - name: due_by
-        type: Utf8
+        type: Timestamp
         nullable: true
-        description: ISO 8601 timestamp for resolution SLA deadline
+        description: Resolution SLA deadline
         expr:
-          kind: path
-          path:
-            - due_by
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - due_by
       - name: fr_due_by
-        type: Utf8
+        type: Timestamp
         nullable: true
-        description: ISO 8601 timestamp for first response SLA deadline
+        description: First response SLA deadline
         expr:
-          kind: path
-          path:
-            - fr_due_by
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - fr_due_by
       - name: created_at
-        type: Utf8
+        type: Timestamp
         nullable: true
-        description: ISO 8601 timestamp when the ticket was created
+        description: Timestamp when the ticket was created
         expr:
-          kind: path
-          path:
-            - created_at
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - created_at
       - name: updated_at
-        type: Utf8
+        type: Timestamp
         nullable: true
-        description: ISO 8601 timestamp when the ticket was last updated
+        description: Timestamp when the ticket was last updated
+        expr:
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - updated_at
+
+  - name: search_tickets
+    description: >-
+      Search Freshdesk tickets by status, priority, agent, group, or any
+      combination using Freshdesk filter query syntax. Unlike `freshdesk.tickets`
+      (which is limited to the last 30 days), this table queries all tickets
+      matching the filter expression across the full ticket history.
+    guide: |
+      Requires the `query` filter using Freshdesk filter query syntax.
+      Enclose the query in double quotes and wrap field conditions in
+      parentheses. Examples:
+
+        WHERE query = '"(status:2 AND priority:3)"'
+        WHERE query = '"(status:2)"'
+        WHERE query = '"(priority:4 AND group_id:12345)"'
+        WHERE query = '"(agent_id:67890 AND status:3)"'
+
+      Status codes: 2=Open, 3=Pending, 4=Resolved, 5=Closed
+      Priority codes: 1=Low, 2=Medium, 3=High, 4=Urgent
+
+      Returns up to 300 tickets (Freshdesk API limit); narrow your query
+      if you expect more results.
+
+      Docs: https://developers.freshdesk.com/api/#filter_tickets
+    filters:
+      - name: query
+        required: true
+    request:
+      method: GET
+      path: /api/v2/tickets/filter
+      query:
+        - name: query
+          from: filter
+          key: query
+    response:
+      rows_path:
+        - results
+    pagination:
+      mode: page
+      page_param: page
+      page_start: 1
+      page_step: 1
+      page_size:
+        default: 30
+        max: 30
+        query_param: per_page
+    columns:
+      - name: id
+        type: Int64
+        nullable: false
+        description: Unique ticket ID
         expr:
           kind: path
           path:
-            - updated_at
+            - id
+      - name: subject
+        type: Utf8
+        nullable: true
+        description: Ticket subject line
+        expr:
+          kind: path
+          path:
+            - subject
+      - name: status
+        type: Int64
+        nullable: true
+        description: Ticket status (2=Open, 3=Pending, 4=Resolved, 5=Closed)
+        expr:
+          kind: path
+          path:
+            - status
+      - name: priority
+        type: Int64
+        nullable: true
+        description: Ticket priority (1=Low, 2=Medium, 3=High, 4=Urgent)
+        expr:
+          kind: path
+          path:
+            - priority
+      - name: type
+        type: Utf8
+        nullable: true
+        description: Ticket type (for example Question, Incident, Problem)
+        expr:
+          kind: path
+          path:
+            - type
+      - name: requester_id
+        type: Int64
+        nullable: true
+        description: Contact ID of the ticket requester
+        expr:
+          kind: path
+          path:
+            - requester_id
+      - name: responder_id
+        type: Int64
+        nullable: true
+        description: Agent ID currently assigned to the ticket
+        expr:
+          kind: path
+          path:
+            - responder_id
+      - name: group_id
+        type: Int64
+        nullable: true
+        description: Group ID the ticket is assigned to
+        expr:
+          kind: path
+          path:
+            - group_id
+      - name: is_escalated
+        type: Boolean
+        nullable: true
+        description: True if the ticket has been escalated
+        expr:
+          kind: path
+          path:
+            - is_escalated
+      - name: fr_escalated
+        type: Boolean
+        nullable: true
+        description: True if the first response SLA has been breached
+        expr:
+          kind: path
+          path:
+            - fr_escalated
+      - name: due_by
+        type: Timestamp
+        nullable: true
+        description: Resolution SLA deadline
+        expr:
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - due_by
+      - name: fr_due_by
+        type: Timestamp
+        nullable: true
+        description: First response SLA deadline
+        expr:
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - fr_due_by
+      - name: created_at
+        type: Timestamp
+        nullable: true
+        description: Timestamp when the ticket was created
+        expr:
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - created_at
+      - name: updated_at
+        type: Timestamp
+        nullable: true
+        description: Timestamp when the ticket was last updated
+        expr:
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - updated_at
 
   - name: contacts
     description: >-
@@ -447,34 +657,41 @@ tables:
           path:
             - tags
       - name: created_at
-        type: Utf8
+        type: Timestamp
         nullable: true
-        description: ISO 8601 timestamp when the contact was created
+        description: Timestamp when the contact was created
         expr:
-          kind: path
-          path:
-            - created_at
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - created_at
       - name: updated_at
-        type: Utf8
+        type: Timestamp
         nullable: true
-        description: ISO 8601 timestamp when the contact was last updated
+        description: Timestamp when the contact was last updated
         expr:
-          kind: path
-          path:
-            - updated_at
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - updated_at
 
   - name: agents
     description: >-
       Freshdesk support agents on the account. Each row is one agent with
-      their contact details (name, email), availability status, and ticket scope.
+      their contact details (name, email), type, availability, and ticket scope.
     guide: |
       No filters required. Returns all agents on the account.
 
+      type values: support_agent, field_agent, collaborator
       ticket_scope values: 1=Global, 2=Group, 3=Restricted
-      type values: fulltime, occasional
+      occasional: true for part-time agents who are billed differently
 
       Example:
-        SELECT id, name, email, available, type
+        SELECT id, name, email, type, available, occasional
         FROM freshdesk.agents
         ORDER BY name ASC
     request:
@@ -503,7 +720,7 @@ tables:
       - name: name
         type: Utf8
         nullable: true
-        description: Agent full name
+        description: Agent full name (from nested contact object)
         expr:
           kind: path
           path:
@@ -512,7 +729,7 @@ tables:
       - name: email
         type: Utf8
         nullable: true
-        description: Agent email address
+        description: Agent email address (from nested contact object)
         expr:
           kind: path
           path:
@@ -521,7 +738,7 @@ tables:
       - name: phone
         type: Utf8
         nullable: true
-        description: Agent phone number
+        description: Agent phone number (from nested contact object)
         expr:
           kind: path
           path:
@@ -530,11 +747,21 @@ tables:
       - name: type
         type: Utf8
         nullable: true
-        description: Agent type — fulltime or occasional
+        description: >-
+          Agent type: support_agent (handles tickets directly), field_agent
+          (field service), or collaborator (read-only access to tickets).
         expr:
           kind: path
           path:
             - type
+      - name: occasional
+        type: Boolean
+        nullable: true
+        description: True if the agent is an occasional (part-time) agent
+        expr:
+          kind: path
+          path:
+            - occasional
       - name: available
         type: Boolean
         nullable: true
@@ -552,21 +779,27 @@ tables:
           path:
             - ticket_scope
       - name: created_at
-        type: Utf8
+        type: Timestamp
         nullable: true
-        description: ISO 8601 timestamp when the agent was added
+        description: Timestamp when the agent was added
         expr:
-          kind: path
-          path:
-            - created_at
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - created_at
       - name: updated_at
-        type: Utf8
+        type: Timestamp
         nullable: true
-        description: ISO 8601 timestamp when the agent was last updated
+        description: Timestamp when the agent was last updated
         expr:
-          kind: path
-          path:
-            - updated_at
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - updated_at
 
   - name: groups
     description: >-
@@ -620,18 +853,24 @@ tables:
           path:
             - description
       - name: created_at
-        type: Utf8
+        type: Timestamp
         nullable: true
-        description: ISO 8601 timestamp when the group was created
+        description: Timestamp when the group was created
         expr:
-          kind: path
-          path:
-            - created_at
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - created_at
       - name: updated_at
-        type: Utf8
+        type: Timestamp
         nullable: true
-        description: ISO 8601 timestamp when the group was last updated
+        description: Timestamp when the group was last updated
         expr:
-          kind: path
-          path:
-            - updated_at
+          kind: format_timestamp
+          input: iso8601
+          expr:
+            kind: path
+            path:
+              - updated_at

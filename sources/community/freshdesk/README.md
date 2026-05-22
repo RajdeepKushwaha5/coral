@@ -10,7 +10,8 @@ Query Freshdesk support tickets, contacts, agents, and groups as SQL tables. Fil
 
 | Table | Description | Required filters | Optional filters |
 |-------|-------------|-----------------|-----------------|
-| `freshdesk.tickets` | Support tickets with status, priority, SLA, and assignment | — | `filter`, `updated_since`, `order_by`, `order_type` |
+| `freshdesk.tickets` | Support tickets from the last 30 days with status, priority, SLA, and assignment | — | `filter`, `updated_since`, `order_by`, `order_type`, `include` |
+| `freshdesk.search_tickets` | Search all tickets by status, priority, agent, or group using Freshdesk filter query syntax | `query` | — |
 | `freshdesk.contacts` | Customer contacts with email, phone, and company | — | `updated_since`, `state` |
 | `freshdesk.agents` | Support agents with availability and contact details | — | — |
 | `freshdesk.groups` | Agent groups for ticket routing | — | — |
@@ -19,7 +20,7 @@ Query Freshdesk support tickets, contacts, agents, and groups as SQL tables. Fil
 
 | Function | Description |
 |----------|-------------|
-| `freshdesk.conversations(ticket_id => N)` | All replies and private notes for a specific ticket |
+| `freshdesk.conversations(ticket_id => N)` | Agent replies and private notes for a specific ticket (does not include the original ticket description) |
 
 ## Authentication
 
@@ -70,13 +71,30 @@ WHERE updated_since = '2024-01-01T00:00:00Z'
 ORDER BY updated_at DESC;
 ```
 
-Unresolved high-priority tickets (status 2=Open, 3=Pending; priority 3=High, 4=Urgent):
+Fetch a ticket with its original description:
+
+```sql
+SELECT id, subject, status, description_text
+FROM freshdesk.tickets
+WHERE include = 'description'
+LIMIT 25;
+```
+
+Unresolved high-priority tickets using `search_tickets` (searches across all ticket history):
 
 ```sql
 SELECT id, subject, priority, due_by, fr_escalated
-FROM freshdesk.tickets
-WHERE status IN (2, 3)
-  AND priority IN (3, 4)
+FROM freshdesk.search_tickets
+WHERE query = '"(status:2 AND priority:3)"'
+ORDER BY due_by ASC;
+```
+
+All urgent open tickets assigned to a specific agent:
+
+```sql
+SELECT id, subject, status, priority, due_by
+FROM freshdesk.search_tickets
+WHERE query = '"(status:2 AND priority:4 AND agent_id:12345)"'
 ORDER BY due_by ASC;
 ```
 
@@ -89,16 +107,16 @@ WHERE state = 'verified'
 ORDER BY name ASC;
 ```
 
-Available agents per group:
+Available agents:
 
 ```sql
-SELECT a.id, a.name, a.email, a.available
-FROM freshdesk.agents a
-WHERE a.available = true
-ORDER BY a.name ASC;
+SELECT id, name, email, type, available, occasional
+FROM freshdesk.agents
+WHERE available = true
+ORDER BY name ASC;
 ```
 
-Expand a ticket's conversation thread:
+Expand a ticket's conversation thread (replies and notes only):
 
 ```sql
 SELECT id, incoming, private, body_text, created_at
@@ -142,7 +160,20 @@ ORDER BY t.created_at DESC;
 | `spam` | Tickets marked as spam |
 | `deleted` | Deleted tickets |
 
-When `filter` is omitted, Freshdesk returns all tickets.
+When `filter` is omitted, Freshdesk returns all tickets from the last 30 days.
+
+## `search_tickets` Filter Query Syntax
+
+The `query` filter uses [Freshdesk filter query syntax](https://developers.freshdesk.com/api/#filter_tickets). Wrap the value in double quotes and enclose field conditions in parentheses:
+
+```sql
+WHERE query = '"(status:2)"'
+WHERE query = '"(status:2 AND priority:3)"'
+WHERE query = '"(priority:4 AND group_id:12345)"'
+WHERE query = '"(agent_id:67890 AND status:3)"'
+```
+
+The API returns at most 300 results; narrow your query if you expect more.
 
 ## Status and Priority Reference
 
@@ -160,10 +191,23 @@ When `filter` is omitted, Freshdesk returns all tickets.
 | `3` | High |
 | `4` | Urgent |
 
+## Agent Type Reference
+
+| Type value | Meaning |
+|---|---|
+| `support_agent` | Handles tickets directly |
+| `field_agent` | Field service agent |
+| `collaborator` | Read-only access to tickets |
+
+The `occasional` column is `true` for part-time agents who are billed differently from full-time agents.
+
 ## Notes
 
 - All tables are strictly read-only.
-- Freshdesk paginates all list endpoints at up to 100 records per page. Coral handles pagination automatically.
+- `freshdesk.tickets` returns tickets from the **last 30 days** by default (Freshdesk API behavior). Use `freshdesk.search_tickets` to query across all ticket history with status, priority, agent, or group filters.
+- `freshdesk.conversations` returns agent replies and private notes only. The original ticket description is not included; use `WHERE include = 'description'` on `freshdesk.tickets` to populate the `description_text` column.
+- Freshdesk paginates all list endpoints at up to 100 records per page; `search_tickets` uses 30 per page (Freshdesk limit). Coral handles pagination automatically.
 - `freshdesk.agents` returns contact details (name, email, phone) from the nested `contact` object in each agent record.
 - `updated_since` accepts ISO 8601 datetime strings (e.g. `2024-01-01T00:00:00Z`).
+- All timestamp columns (`created_at`, `updated_at`, `due_by`, `fr_due_by`) are native `Timestamp` values.
 - Rate limit varies by Freshdesk plan. The connector handles `429` responses automatically via `Retry-After`.
