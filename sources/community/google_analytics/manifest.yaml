@@ -1,0 +1,401 @@
+name: google_analytics
+version: 0.1.0
+dsl_version: 3
+backend: http
+description: >-
+  Query Google Analytics GA4 account structure, properties, and data streams
+  via the Analytics Admin API v1beta. Authenticates with Google OAuth
+  (authorization_code + PKCE). Join with GitHub deploys, Sentry errors, or
+  PagerDuty incidents to correlate analytics coverage with engineering activity.
+base_url: https://analyticsadmin.googleapis.com
+
+inputs:
+  GOOGLE_ANALYTICS_TOKEN:
+    kind: secret
+    hint: |
+      A valid Google OAuth access token with the
+      `https://www.googleapis.com/auth/analytics.readonly` scope.
+
+      To connect interactively, choose "Connect with Google" and provide a
+      Google OAuth client ID and client secret when prompted. Access tokens
+      expire; rerun `coral source add --interactive google_analytics` when
+      the stored token needs to be replaced.
+
+      To paste a token manually instead, obtain one from your own OAuth flow
+      with the same read-only Analytics scope.
+    credential:
+      methods:
+        - type: oauth
+          label: Connect with Google
+          description: Use a Google OAuth client ID and client secret.
+          oauth:
+            flow:
+              type: authorization_code
+              pkce: required
+            redirect_uri: http://127.0.0.1/oauth/callback
+            redirect_uri_port: random
+            endpoints:
+              authorization_url: https://accounts.google.com/o/oauth2/v2/auth
+              token_url: https://oauth2.googleapis.com/token
+            client:
+              id:
+                input: GOOGLE_OAUTH_CLIENT_ID
+              secret:
+                input: GOOGLE_OAUTH_CLIENT_SECRET
+                transport: request_body
+            scopes:
+              scope:
+                delimiter: space
+                values:
+                  - https://www.googleapis.com/auth/analytics.readonly
+        - type: source_config
+          label: Paste access token
+
+auth:
+  type: HeaderAuth
+  headers:
+    - name: Authorization
+      from: template
+      template: Bearer {{input.GOOGLE_ANALYTICS_TOKEN}}
+
+request_headers:
+  - name: Accept
+    from: literal
+    value: application/json
+
+rate_limit:
+  extra_statuses:
+    - 429
+  retry_after_header: Retry-After
+
+test_queries:
+  - >-
+    SELECT table_name
+    FROM coral.tables
+    WHERE schema_name = 'google_analytics'
+    ORDER BY table_name
+    LIMIT 1
+
+tables:
+  - name: accounts
+    description: >-
+      Lists all Google Analytics GA4 accounts accessible to the authenticated
+      user. Returns account resource name, numeric account ID, display name,
+      region code, and creation and update timestamps.
+    guide: |
+      Start here to discover account IDs for use with the `properties` table.
+      The `account_id` value is in the form `accounts/123456789`; pass it as
+      the `account_id` filter on `google_analytics.properties`.
+    request:
+      method: GET
+      path: /v1beta/accounts
+      query:
+        - name: showDeleted
+          from: literal
+          value: "false"
+    response:
+      rows_path:
+        - accounts
+    pagination:
+      mode: cursor_query
+      cursor_param: pageToken
+      response_cursor_path:
+        - nextPageToken
+      page_size:
+        default: 200
+        max: 200
+        query_param: pageSize
+    columns:
+      - name: account_id
+        type: Utf8
+        nullable: false
+        description: >-
+          Account resource name in the form `accounts/123456789`. Use as
+          the `account_id` filter on `google_analytics.properties`.
+        expr:
+          kind: path
+          path:
+            - name
+      - name: display_name
+        type: Utf8
+        nullable: true
+        description: Human-readable account display name.
+        expr:
+          kind: path
+          path:
+            - displayName
+      - name: region_code
+        type: Utf8
+        nullable: true
+        description: Country of business as a Unicode CLDR region code, for example US.
+        expr:
+          kind: path
+          path:
+            - regionCode
+      - name: create_time
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the account was created.
+        expr:
+          kind: path
+          path:
+            - createTime
+      - name: update_time
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the account was last updated.
+        expr:
+          kind: path
+          path:
+            - updateTime
+      - name: deleted
+        type: Utf8
+        nullable: true
+        description: String true when this account is soft-deleted.
+        expr:
+          kind: if_present
+          check:
+            kind: path
+            path:
+              - deleted
+          then_value: "true"
+
+  - name: properties
+    description: >-
+      Lists GA4 properties under a given account. Returns the property resource
+      name, numeric property ID, display name, time zone, currency code,
+      industry category, and service level.
+    guide: |
+      Requires the `account_id` filter in the form `accounts/123456789`.
+      Obtain account IDs from `google_analytics.accounts`. The `property_id`
+      value is in the form `properties/987654321`; pass it as the `property_id`
+      filter on `google_analytics.data_streams`.
+    filters:
+      - name: account_id
+        required: true
+    request:
+      method: GET
+      path: /v1beta/properties
+      query:
+        - name: filter
+          from: template
+          template: "parent:{{filter.account_id}}"
+        - name: showDeleted
+          from: literal
+          value: "false"
+    response:
+      rows_path:
+        - properties
+    pagination:
+      mode: cursor_query
+      cursor_param: pageToken
+      response_cursor_path:
+        - nextPageToken
+      page_size:
+        default: 200
+        max: 200
+        query_param: pageSize
+    columns:
+      - name: account_id
+        type: Utf8
+        nullable: false
+        description: Parent account resource name; echoes the filter value.
+        expr:
+          kind: from_filter
+          key: account_id
+        virtual: true
+      - name: property_id
+        type: Utf8
+        nullable: false
+        description: >-
+          Property resource name in the form `properties/987654321`. Use as
+          the `property_id` filter on `google_analytics.data_streams`.
+        expr:
+          kind: path
+          path:
+            - name
+      - name: display_name
+        type: Utf8
+        nullable: true
+        description: Human-readable property display name.
+        expr:
+          kind: path
+          path:
+            - displayName
+      - name: time_zone
+        type: Utf8
+        nullable: true
+        description: Reporting time zone used for this property, for example America/New_York.
+        expr:
+          kind: path
+          path:
+            - timeZone
+      - name: currency_code
+        type: Utf8
+        nullable: true
+        description: Currency used for monetary reports, for example USD.
+        expr:
+          kind: path
+          path:
+            - currencyCode
+      - name: industry_category
+        type: Utf8
+        nullable: true
+        description: Industry category set for this property, for example TECHNOLOGY.
+        expr:
+          kind: path
+          path:
+            - industryCategory
+      - name: service_level
+        type: Utf8
+        nullable: true
+        description: >-
+          GA4 service level (GOOGLE_ANALYTICS_STANDARD or
+          GOOGLE_ANALYTICS_360).
+        expr:
+          kind: path
+          path:
+            - serviceLevel
+      - name: create_time
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the property was created.
+        expr:
+          kind: path
+          path:
+            - createTime
+      - name: update_time
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the property was last updated.
+        expr:
+          kind: path
+          path:
+            - updateTime
+      - name: deleted
+        type: Utf8
+        nullable: true
+        description: String true when this property is soft-deleted.
+        expr:
+          kind: if_present
+          check:
+            kind: path
+            path:
+              - deleted
+          then_value: "true"
+
+  - name: data_streams
+    description: >-
+      Lists data streams attached to a GA4 property. Returns stream resource
+      name, numeric stream ID, stream type, display name, and type-specific
+      details such as the web URI, Android app bundle ID, or iOS bundle ID.
+    guide: |
+      Requires the `property_id` filter in the form `properties/987654321`.
+      Obtain property IDs from `google_analytics.properties`. Stream type is
+      one of WEB_DATA_STREAM, ANDROID_APP_DATA_STREAM, or IOS_APP_DATA_STREAM.
+      Use `web_uri` to identify which web domain a WEB_DATA_STREAM covers.
+    filters:
+      - name: property_id
+        required: true
+    request:
+      method: GET
+      path: /v1beta/{{filter.property_id}}/dataStreams
+    response:
+      rows_path:
+        - dataStreams
+    pagination:
+      mode: cursor_query
+      cursor_param: pageToken
+      response_cursor_path:
+        - nextPageToken
+      page_size:
+        default: 200
+        max: 200
+        query_param: pageSize
+    columns:
+      - name: property_id
+        type: Utf8
+        nullable: false
+        description: Parent property resource name; echoes the filter value.
+        expr:
+          kind: from_filter
+          key: property_id
+        virtual: true
+      - name: stream_id
+        type: Utf8
+        nullable: false
+        description: Stream resource name in the form `properties/987654321/dataStreams/111`.
+        expr:
+          kind: path
+          path:
+            - name
+      - name: stream_type
+        type: Utf8
+        nullable: true
+        description: >-
+          Stream type: WEB_DATA_STREAM, ANDROID_APP_DATA_STREAM, or
+          IOS_APP_DATA_STREAM.
+        expr:
+          kind: path
+          path:
+            - type
+      - name: display_name
+        type: Utf8
+        nullable: true
+        description: Human-readable stream display name.
+        expr:
+          kind: path
+          path:
+            - displayName
+      - name: web_uri
+        type: Utf8
+        nullable: true
+        description: Default URI for WEB_DATA_STREAM streams; null for app streams.
+        expr:
+          kind: path
+          path:
+            - webStreamData
+            - defaultUri
+      - name: measurement_id
+        type: Utf8
+        nullable: true
+        description: GA4 measurement ID for WEB_DATA_STREAM streams, for example G-XXXXXXX.
+        expr:
+          kind: path
+          path:
+            - webStreamData
+            - measurementId
+      - name: android_package_name
+        type: Utf8
+        nullable: true
+        description: Android app package name for ANDROID_APP_DATA_STREAM streams.
+        expr:
+          kind: path
+          path:
+            - androidAppStreamData
+            - packageName
+      - name: ios_bundle_id
+        type: Utf8
+        nullable: true
+        description: iOS app bundle ID for IOS_APP_DATA_STREAM streams.
+        expr:
+          kind: path
+          path:
+            - iosAppStreamData
+            - bundleId
+      - name: create_time
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the stream was created.
+        expr:
+          kind: path
+          path:
+            - createTime
+      - name: update_time
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the stream was last updated.
+        expr:
+          kind: path
+          path:
+            - updateTime
