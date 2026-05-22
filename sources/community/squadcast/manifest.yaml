@@ -1,0 +1,349 @@
+name: squadcast
+version: 0.1.0
+dsl_version: 3
+backend: http
+description: >-
+  Query Squadcast incidents, services, and users via the Squadcast API v3.
+  Join with GitHub PRs, Sentry errors, PagerDuty incidents, and Linear issues
+  for cross-source SRE and incident management intelligence.
+base_url: https://api.squadcast.com
+
+inputs:
+  SQUADCAST_TOKEN:
+    kind: secret
+    hint: |
+      A Squadcast access token. Obtain one from the Squadcast web app under
+      Profile → Access Tokens, or exchange a refresh token for an access token
+      via the Squadcast auth endpoint.
+
+      To exchange a refresh token:
+        curl -X POST https://auth.squadcast.com/oauth/access-token \
+          -H "X-Refresh-Token: <your-refresh-token>"
+
+      The returned access_token value is what you set here. Tokens expire
+      after 1 hour; re-run `coral source add --interactive squadcast` to
+      refresh.
+
+      For EU deployments change SQUADCAST_REGION to eu.
+
+      See https://apidocs.squadcast.com/
+  SQUADCAST_REGION:
+    kind: variable
+    default: us
+    hint: |
+      Region for your Squadcast account. Use `us` for the default US region
+      or `eu` for the EU region. This controls the base URL used for all
+      API calls.
+
+auth:
+  type: HeaderAuth
+  headers:
+    - name: Authorization
+      from: template
+      template: "Bearer {{input.SQUADCAST_TOKEN}}"
+
+request_headers:
+  - name: Accept
+    from: literal
+    value: application/json
+
+rate_limit:
+  extra_statuses:
+    - 429
+  retry_after_header: Retry-After
+
+test_queries:
+  - SELECT id, title, status, severity FROM squadcast.incidents LIMIT 5
+  - SELECT id, name, escalation_policy FROM squadcast.services LIMIT 5
+
+tables:
+  - name: incidents
+    description: >-
+      Lists Squadcast incidents. Returns incident ID, title, description,
+      status, severity, service, assignee, triggered and resolved timestamps,
+      and the source that triggered the alert.
+    guide: |
+      Use `status` to filter by incident state: triggered, acknowledged,
+      resolved, or suppressed. Join `service_id` with `squadcast.services`
+      and `assignee_id` with `squadcast.users`. Join `triggered_at` with
+      GitHub deploy `created_at` or Sentry `first_seen` to correlate incidents
+      with deploys and errors.
+    fetch_limit_default: 20
+    filters:
+      - name: status
+        required: false
+      - name: service_id
+        required: false
+    request:
+      method: GET
+      path: /v3/incidents
+      query:
+        - name: status
+          from: filter
+          key: status
+        - name: serviceId
+          from: filter
+          key: service_id
+    response:
+      rows_path:
+        - data
+        - incidents
+    pagination:
+      mode: cursor_query
+      cursor_param: pageToken
+      response_cursor_path:
+        - data
+        - meta
+        - next_page_token
+      page_size:
+        default: 20
+        max: 100
+        query_param: pageSize
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Unique incident ID.
+        expr:
+          kind: path
+          path:
+            - id
+      - name: title
+        type: Utf8
+        nullable: true
+        description: Incident title as triggered by the alert source.
+        expr:
+          kind: path
+          path:
+            - title
+      - name: description
+        type: Utf8
+        nullable: true
+        description: Incident description or alert message body.
+        expr:
+          kind: path
+          path:
+            - description
+      - name: status
+        type: Utf8
+        nullable: true
+        description: >-
+          Incident status: triggered, acknowledged, resolved, or suppressed.
+        expr:
+          kind: path
+          path:
+            - status
+      - name: severity
+        type: Utf8
+        nullable: true
+        description: Incident severity level (critical, high, medium, or low).
+        expr:
+          kind: path
+          path:
+            - severity
+      - name: service_id
+        type: Utf8
+        nullable: true
+        description: ID of the Squadcast service that owns this incident; join to squadcast.services.
+        expr:
+          kind: path
+          path:
+            - service
+            - id
+      - name: service_name
+        type: Utf8
+        nullable: true
+        description: Name of the service that owns this incident.
+        expr:
+          kind: path
+          path:
+            - service
+            - name
+      - name: assignee_id
+        type: Utf8
+        nullable: true
+        description: ID of the user currently assigned to this incident.
+        expr:
+          kind: path
+          path:
+            - assignee
+            - id
+      - name: assignee_name
+        type: Utf8
+        nullable: true
+        description: Name of the user currently assigned to this incident.
+        expr:
+          kind: path
+          path:
+            - assignee
+            - name
+      - name: triggered_at
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the incident was triggered.
+        expr:
+          kind: path
+          path:
+            - triggered_at
+      - name: acknowledged_at
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the incident was first acknowledged; null if not yet acknowledged.
+        expr:
+          kind: path
+          path:
+            - acknowledged_at
+      - name: resolved_at
+        type: Utf8
+        nullable: true
+        description: ISO 8601 timestamp when the incident was resolved; null if still open.
+        expr:
+          kind: path
+          path:
+            - resolved_at
+      - name: alert_source
+        type: Utf8
+        nullable: true
+        description: Name of the integration or alert source that triggered the incident.
+        expr:
+          kind: path
+          path:
+            - alert_source
+            - name
+      - name: raw
+        type: Json
+        nullable: true
+        description: Raw incident object.
+        expr:
+          kind: current_row
+
+  - name: services
+    description: >-
+      Lists all Squadcast services. Returns service ID, name, description,
+      escalation policy, and on-call information.
+    guide: |
+      Use `id` to join with `service_id` on `squadcast.incidents` to group
+      incidents by service. Join `name` with GitHub repository names or Sentry
+      project slugs for cross-source service identity.
+    request:
+      method: GET
+      path: /v3/services
+    response:
+      rows_path:
+        - data
+        - services
+    pagination:
+      mode: none
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Unique service ID; join to service_id on squadcast.incidents.
+        expr:
+          kind: path
+          path:
+            - id
+      - name: name
+        type: Utf8
+        nullable: true
+        description: Service display name; join with Sentry project slugs or GitHub repo names.
+        expr:
+          kind: path
+          path:
+            - name
+      - name: description
+        type: Utf8
+        nullable: true
+        description: Service description.
+        expr:
+          kind: path
+          path:
+            - description
+      - name: escalation_policy
+        type: Utf8
+        nullable: true
+        description: Name of the escalation policy assigned to this service.
+        expr:
+          kind: path
+          path:
+            - escalation_policy
+            - name
+      - name: on_call_now
+        type: Json
+        nullable: true
+        description: Array of users currently on call for this service.
+        expr:
+          kind: path
+          path:
+            - on_call_now
+      - name: status
+        type: Utf8
+        nullable: true
+        description: Service health status (active, or similar).
+        expr:
+          kind: path
+          path:
+            - status
+      - name: raw
+        type: Json
+        nullable: true
+        description: Raw service object.
+        expr:
+          kind: current_row
+
+  - name: users
+    description: >-
+      Lists all users in the Squadcast account. Returns user ID, name, email,
+      role, and on-call status.
+    guide: |
+      Use `email` to join with GitHub PR authors, Linear assignees, and
+      PagerDuty users for cross-source engineer identity resolution. Join
+      `id` with `assignee_id` on `squadcast.incidents`.
+    request:
+      method: GET
+      path: /v3/users
+    response:
+      rows_path:
+        - data
+        - users
+    pagination:
+      mode: none
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Unique user ID; join to assignee_id on squadcast.incidents.
+        expr:
+          kind: path
+          path:
+            - id
+      - name: name
+        type: Utf8
+        nullable: true
+        description: User display name.
+        expr:
+          kind: path
+          path:
+            - name
+      - name: email
+        type: Utf8
+        nullable: true
+        description: User email address; join key with GitHub, Linear, and PagerDuty.
+        expr:
+          kind: path
+          path:
+            - email
+      - name: role
+        type: Utf8
+        nullable: true
+        description: Account role (account_owner, user, or stakeholder).
+        expr:
+          kind: path
+          path:
+            - role
+      - name: raw
+        type: Json
+        nullable: true
+        description: Raw user object.
+        expr:
+          kind: current_row
