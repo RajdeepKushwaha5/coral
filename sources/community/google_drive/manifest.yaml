@@ -1,0 +1,458 @@
+name: google_drive
+version: 0.1.0
+dsl_version: 3
+backend: http
+description: >-
+  Query Google Drive file listings, file metadata, and shared drives via the
+  Drive API v3. Authenticates with Google OAuth (authorization_code + PKCE).
+  Join with GitHub, Linear, or Notion sources to correlate document activity
+  with engineering work.
+base_url: https://www.googleapis.com
+
+inputs:
+  GOOGLE_DRIVE_TOKEN:
+    kind: secret
+    hint: |
+      A valid Google OAuth access token with the
+      `https://www.googleapis.com/auth/drive.readonly` scope.
+
+      To connect interactively, choose "Connect with Google" and provide a
+      Google OAuth client ID and client secret when prompted. Access tokens
+      expire; rerun `coral source add --interactive google_drive` when the
+      stored token needs to be replaced.
+
+      To paste a token manually instead, obtain one from your own OAuth flow
+      with the same read-only Drive scope.
+    credential:
+      methods:
+        - type: oauth
+          label: Connect with Google
+          description: Use a Google OAuth client ID and client secret.
+          oauth:
+            flow:
+              type: authorization_code
+              pkce: required
+            redirect_uri: http://127.0.0.1/oauth/callback
+            redirect_uri_port: random
+            endpoints:
+              authorization_url: https://accounts.google.com/o/oauth2/v2/auth
+              token_url: https://oauth2.googleapis.com/token
+            client:
+              id:
+                input: GOOGLE_OAUTH_CLIENT_ID
+              secret:
+                input: GOOGLE_OAUTH_CLIENT_SECRET
+                transport: request_body
+            scopes:
+              scope:
+                delimiter: space
+                values:
+                  - https://www.googleapis.com/auth/drive.readonly
+        - type: source_config
+          label: Paste access token
+
+auth:
+  type: HeaderAuth
+  headers:
+    - name: Authorization
+      from: template
+      template: Bearer {{input.GOOGLE_DRIVE_TOKEN}}
+
+request_headers:
+  - name: Accept
+    from: literal
+    value: application/json
+
+rate_limit:
+  extra_statuses:
+    - 429
+  retry_after_header: Retry-After
+
+test_queries:
+  - >-
+    SELECT table_name
+    FROM coral.tables
+    WHERE schema_name = 'google_drive'
+    ORDER BY table_name
+    LIMIT 1
+
+tables:
+  - name: files
+    description: >-
+      Lists files and folders accessible to the authenticated user across My
+      Drive and shared drives. Supports an optional `q` filter using Drive
+      query syntax (for example `mimeType = "application/pdf"` or
+      `modifiedTime > "2026-01-01T00:00:00"`) and an optional `drive_id`
+      filter to scope results to a specific shared drive.
+    guide: |
+      Start here to discover file IDs for use with `file_info`. Always use
+      `LIMIT` on large drives. The `q` filter uses Drive query syntax, not SQL;
+      see https://developers.google.com/drive/api/guides/search-files for
+      supported fields and operators.
+    fetch_limit_default: 100
+    filters:
+      - name: q
+        required: false
+      - name: drive_id
+        required: false
+    request:
+      method: GET
+      path: /drive/v3/files
+      query:
+        - name: fields
+          from: literal
+          value: >-
+            nextPageToken,files(id,name,mimeType,size,createdTime,modifiedTime,
+            owners,shared,webViewLink,parents,trashed,driveId)
+        - name: supportsAllDrives
+          from: literal
+          value: "true"
+        - name: includeItemsFromAllDrives
+          from: literal
+          value: "true"
+        - name: q
+          from: filter
+          key: q
+        - name: driveId
+          from: filter
+          key: drive_id
+        - name: corpora
+          from: literal
+          value: allDrives
+    response:
+      rows_path:
+        - files
+    pagination:
+      mode: cursor_query
+      cursor_param: pageToken
+      response_cursor_path:
+        - nextPageToken
+      page_size:
+        default: 100
+        max: 1000
+        query_param: pageSize
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Unique file identifier; use with `file_info` for full metadata.
+        expr:
+          kind: path
+          path:
+            - id
+      - name: name
+        type: Utf8
+        nullable: true
+        description: File or folder name.
+        expr:
+          kind: path
+          path:
+            - name
+      - name: mime_type
+        type: Utf8
+        nullable: true
+        description: >-
+          MIME type (for example application/vnd.google-apps.document for a
+          Google Doc, or application/pdf for a PDF).
+        expr:
+          kind: path
+          path:
+            - mimeType
+      - name: size
+        type: Int64
+        nullable: true
+        description: File size in bytes; null for Google Workspace files.
+        expr:
+          kind: path
+          path:
+            - size
+      - name: created_time
+        type: Utf8
+        nullable: true
+        description: ISO 8601 creation timestamp.
+        expr:
+          kind: path
+          path:
+            - createdTime
+      - name: modified_time
+        type: Utf8
+        nullable: true
+        description: ISO 8601 last-modified timestamp.
+        expr:
+          kind: path
+          path:
+            - modifiedTime
+      - name: owner_email
+        type: Utf8
+        nullable: true
+        description: Email address of the primary owner.
+        expr:
+          kind: path
+          path:
+            - owners
+            - "0"
+            - emailAddress
+      - name: shared
+        type: Utf8
+        nullable: true
+        description: String true when the file is shared with other users.
+        expr:
+          kind: if_present
+          check:
+            kind: path
+            path:
+              - shared
+          then_value: "true"
+      - name: trashed
+        type: Utf8
+        nullable: true
+        description: String true when the file is in the trash.
+        expr:
+          kind: if_present
+          check:
+            kind: path
+            path:
+              - trashed
+          then_value: "true"
+      - name: web_view_link
+        type: Utf8
+        nullable: true
+        description: URL to open the file in a browser.
+        expr:
+          kind: path
+          path:
+            - webViewLink
+      - name: drive_id
+        type: Utf8
+        nullable: true
+        description: Shared drive ID when the file lives in a shared drive; null for My Drive files.
+        expr:
+          kind: path
+          path:
+            - driveId
+      - name: raw
+        type: Json
+        nullable: true
+        description: Raw Drive file object.
+        expr:
+          kind: current_row
+
+  - name: file_info
+    description: >-
+      Full metadata for a single Drive file or folder. Returns richer detail
+      than the `files` listing table, including description, version, content
+      hints, and the full owners array.
+    guide: |
+      Requires the `file_id` filter. Obtain file IDs from `google_drive.files`.
+      Returns a single row for the requested file.
+    filters:
+      - name: file_id
+        required: true
+    request:
+      method: GET
+      path: /drive/v3/files/{{filter.file_id}}
+      query:
+        - name: fields
+          from: literal
+          value: >-
+            id,name,mimeType,description,size,version,createdTime,modifiedTime,
+            owners,lastModifyingUser,shared,webViewLink,parents,capabilities,
+            contentHints,trashed,driveId
+        - name: supportsAllDrives
+          from: literal
+          value: "true"
+    response:
+      row_strategy: direct
+      allow_404_empty: true
+    pagination:
+      mode: none
+    columns:
+      - name: file_id
+        type: Utf8
+        nullable: false
+        description: Unique file identifier.
+        expr:
+          kind: from_filter
+          key: file_id
+        virtual: true
+      - name: name
+        type: Utf8
+        nullable: true
+        description: File or folder name.
+        expr:
+          kind: path
+          path:
+            - name
+      - name: mime_type
+        type: Utf8
+        nullable: true
+        description: MIME type of the file.
+        expr:
+          kind: path
+          path:
+            - mimeType
+      - name: description
+        type: Utf8
+        nullable: true
+        description: Short description attached to the file.
+        expr:
+          kind: path
+          path:
+            - description
+      - name: size
+        type: Int64
+        nullable: true
+        description: File size in bytes; null for Google Workspace files.
+        expr:
+          kind: path
+          path:
+            - size
+      - name: version
+        type: Int64
+        nullable: true
+        description: Monotonically increasing version number for the file.
+        expr:
+          kind: path
+          path:
+            - version
+      - name: created_time
+        type: Utf8
+        nullable: true
+        description: ISO 8601 creation timestamp.
+        expr:
+          kind: path
+          path:
+            - createdTime
+      - name: modified_time
+        type: Utf8
+        nullable: true
+        description: ISO 8601 last-modified timestamp.
+        expr:
+          kind: path
+          path:
+            - modifiedTime
+      - name: owner_email
+        type: Utf8
+        nullable: true
+        description: Email of the primary owner.
+        expr:
+          kind: path
+          path:
+            - owners
+            - "0"
+            - emailAddress
+      - name: owner_name
+        type: Utf8
+        nullable: true
+        description: Display name of the primary owner.
+        expr:
+          kind: path
+          path:
+            - owners
+            - "0"
+            - displayName
+      - name: last_modifier_email
+        type: Utf8
+        nullable: true
+        description: Email of the user who last modified the file.
+        expr:
+          kind: path
+          path:
+            - lastModifyingUser
+            - emailAddress
+      - name: shared
+        type: Utf8
+        nullable: true
+        description: String true when the file is shared with other users.
+        expr:
+          kind: if_present
+          check:
+            kind: path
+            path:
+              - shared
+          then_value: "true"
+      - name: web_view_link
+        type: Utf8
+        nullable: true
+        description: URL to open the file in a browser.
+        expr:
+          kind: path
+          path:
+            - webViewLink
+      - name: drive_id
+        type: Utf8
+        nullable: true
+        description: Shared drive ID; null for My Drive files.
+        expr:
+          kind: path
+          path:
+            - driveId
+      - name: raw
+        type: Json
+        nullable: true
+        description: Raw Drive file metadata object.
+        expr:
+          kind: current_row
+
+  - name: shared_drives
+    description: >-
+      Lists all shared drives (formerly Team Drives) accessible to the
+      authenticated user. Returns drive ID, name, and creation timestamp.
+    guide: |
+      Use `drive_id` from this table as the `drive_id` filter on
+      `google_drive.files` to scope file listings to a specific shared drive.
+    request:
+      method: GET
+      path: /drive/v3/drives
+      query:
+        - name: fields
+          from: literal
+          value: nextPageToken,drives(id,name,createdTime,hidden)
+    response:
+      rows_path:
+        - drives
+    pagination:
+      mode: cursor_query
+      cursor_param: pageToken
+      response_cursor_path:
+        - nextPageToken
+      page_size:
+        default: 100
+        max: 100
+        query_param: pageSize
+    columns:
+      - name: drive_id
+        type: Utf8
+        nullable: false
+        description: Unique shared drive identifier; use as `drive_id` filter on `files`.
+        expr:
+          kind: path
+          path:
+            - id
+      - name: name
+        type: Utf8
+        nullable: true
+        description: Shared drive display name.
+        expr:
+          kind: path
+          path:
+            - name
+      - name: created_time
+        type: Utf8
+        nullable: true
+        description: ISO 8601 creation timestamp for the shared drive.
+        expr:
+          kind: path
+          path:
+            - createdTime
+      - name: hidden
+        type: Utf8
+        nullable: true
+        description: String true when the drive is hidden from the default view.
+        expr:
+          kind: if_present
+          check:
+            kind: path
+            path:
+              - hidden
+          then_value: "true"
