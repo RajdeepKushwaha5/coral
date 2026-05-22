@@ -9,7 +9,7 @@ Query Freshdesk support tickets, contacts, agents, and groups as SQL tables. Fil
 ## Tables
 
 | Table | Description | Required filters | Optional filters |
-|-------|-------------|-----------------|-----------------|
+| --- | --- | --- | --- |
 | `freshdesk.tickets` | Support tickets from the last 30 days with status, priority, SLA, and assignment | — | `filter`, `updated_since`, `order_by`, `order_type`, `include` |
 | `freshdesk.search_tickets` | Search all tickets by status, priority, agent, or group using Freshdesk filter query syntax | `query` | — |
 | `freshdesk.contacts` | Customer contacts with email, phone, and company | — | `updated_since`, `state` |
@@ -19,8 +19,8 @@ Query Freshdesk support tickets, contacts, agents, and groups as SQL tables. Fil
 ## Source-Scoped Table Functions
 
 | Function | Description |
-|----------|-------------|
-| `freshdesk.conversations(ticket_id => N)` | Agent replies and private notes for a specific ticket (does not include the original ticket description) |
+| --- | --- |
+| `freshdesk.conversations(ticket_id => N)` | All replies and notes for a specific ticket — customer replies, agent replies, and private notes (does not include the original ticket description) |
 
 ## Authentication
 
@@ -154,7 +154,7 @@ ORDER BY t.created_at DESC;
 ## `filter` Values
 
 | Value | Meaning |
-|-------|---------|
+| --- | --- |
 | `new_and_my_open` | New and open tickets assigned to the current agent |
 | `watching` | Tickets the current agent is watching |
 | `spam` | Tickets marked as spam |
@@ -178,14 +178,14 @@ The API returns at most 300 results; narrow your query if you expect more.
 ## Status and Priority Reference
 
 | Status value | Meaning |
-|---|---|
+| --- | --- |
 | `2` | Open |
 | `3` | Pending |
 | `4` | Resolved |
 | `5` | Closed |
 
 | Priority value | Meaning |
-|---|---|
+| --- | --- |
 | `1` | Low |
 | `2` | Medium |
 | `3` | High |
@@ -194,7 +194,7 @@ The API returns at most 300 results; narrow your query if you expect more.
 ## Agent Type Reference
 
 | Type value | Meaning |
-|---|---|
+| --- | --- |
 | `support_agent` | Handles tickets directly |
 | `field_agent` | Field service agent |
 | `collaborator` | Read-only access to tickets |
@@ -205,7 +205,7 @@ The `occasional` column is `true` for part-time agents who are billed differentl
 
 - All tables are strictly read-only.
 - `freshdesk.tickets` returns tickets from the **last 30 days** by default (Freshdesk API behavior). Use `freshdesk.search_tickets` to query across all ticket history with status, priority, agent, or group filters.
-- `freshdesk.conversations` returns agent replies and private notes only. The original ticket description is not included; use `WHERE include = 'description'` on `freshdesk.tickets` to populate the `description_text` column.
+- `freshdesk.conversations` returns all conversation entries: customer replies, agent replies, and private notes. The original ticket description is not included; use `WHERE include = 'description'` on `freshdesk.tickets` to populate the `description_text` column.
 - Freshdesk paginates all list endpoints at up to 100 records per page; `search_tickets` uses 30 per page (Freshdesk limit). Coral handles pagination automatically.
 - `freshdesk.agents` returns contact details (name, email, phone) from the nested `contact` object in each agent record.
 - `updated_since` accepts ISO 8601 datetime strings (e.g. `2024-01-01T00:00:00Z`).

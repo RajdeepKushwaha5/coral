@@ -38,10 +38,13 @@ test_queries:
 functions:
   - name: conversations
     description: >-
-      All replies and private notes for a specific ticket. Returns agent replies
-      and internal notes only — the original ticket description is not included
-      here; access it via the `description_text` column on `freshdesk.tickets`
-      (use `include=description` filter). Pass the numeric ticket ID.
+      All conversation entries for a specific ticket: customer replies, agent
+      replies, and private notes. The original ticket description is not
+      included here; access it via the `description_text` column on
+      `freshdesk.tickets` (use `include=description` filter). Use the
+      `incoming` column to distinguish inbound customer replies from agent
+      outbound replies, and `private` to identify internal notes. Pass the
+      numeric ticket ID.
     fetch_limit_default: 100
     args:
       - name: ticket_id
@@ -406,7 +409,7 @@ tables:
         required: true
     request:
       method: GET
-      path: /api/v2/tickets/filter
+      path: /api/v2/search/tickets
       query:
         - name: query
           from: filter
@@ -422,7 +425,6 @@ tables:
       page_size:
         default: 30
         max: 30
-        query_param: per_page
     columns:
       - name: id
         type: Int64
