@@ -157,7 +157,7 @@ tables:
     guide: |
       Use `email` to join with GitHub PR authors, Linear assignees, and
       PagerDuty users for cross-source engineer identity resolution. Filter by
-      `is_admin = 'true'` to scope results to admins only.
+      `is_admin = true` to scope results to admins only.
     request:
       method: POST
       path: /v2
