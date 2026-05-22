@@ -1,0 +1,424 @@
+name: monday
+version: 0.1.0
+dsl_version: 3
+backend: http
+description: >-
+  Query monday.com boards, items, columns, and users via the monday.com
+  GraphQL API v2. Join with GitHub PRs, Linear issues, and PagerDuty incidents
+  for cross-source project management and engineering intelligence.
+base_url: https://api.monday.com
+
+inputs:
+  MONDAY_API_TOKEN:
+    kind: secret
+    hint: |
+      A monday.com personal API token. Generate one in your monday.com account
+      under Developers → My Access Tokens. Pass the token value directly —
+      no Bearer prefix is used.
+
+      See https://developer.monday.com/api-reference/docs/authentication
+
+auth:
+  type: HeaderAuth
+  headers:
+    - name: Authorization
+      from: input
+      key: MONDAY_API_TOKEN
+
+request_headers:
+  - name: Content-Type
+    from: literal
+    value: application/json
+  - name: API-Version
+    from: literal
+    value: "2026-04"
+
+rate_limit:
+  extra_statuses:
+    - 429
+
+test_queries:
+  - SELECT id, name, board_kind FROM monday.boards LIMIT 5
+  - SELECT id, name, email FROM monday.users LIMIT 5
+  - SELECT function_name FROM coral.table_functions WHERE schema_name = 'monday' ORDER BY function_name LIMIT 1
+
+tables:
+  - name: boards
+    description: >-
+      Lists all active monday.com boards accessible to the authenticated token.
+      Returns board ID, name, description, kind (public/private/share), state,
+      and workspace metadata.
+    guide: |
+      Start here to discover board IDs for use with the `board_items` and
+      `board_columns` table functions. Use board `id` as the `board_id`
+      argument. To include archived or deleted boards, modify the `state`
+      filter in the query.
+    request:
+      method: POST
+      path: /v2
+      body:
+        query: >-
+          { boards(limit: 500, state: active) { id name description board_kind
+          state created_at updated_at workspace { id name } } }
+    response:
+      rows_path:
+        - data
+        - boards
+    pagination:
+      mode: none
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: >-
+          Board ID; use as the `board_id` argument for `board_items` and
+          `board_columns` table functions.
+        expr:
+          kind: path
+          path:
+            - id
+      - name: name
+        type: Utf8
+        nullable: true
+        description: Board display name.
+        expr:
+          kind: path
+          path:
+            - name
+      - name: description
+        type: Utf8
+        nullable: true
+        description: Board description.
+        expr:
+          kind: path
+          path:
+            - description
+      - name: board_kind
+        type: Utf8
+        nullable: true
+        description: Board visibility (public, private, or share).
+        expr:
+          kind: path
+          path:
+            - board_kind
+      - name: state
+        type: Utf8
+        nullable: true
+        description: Board state (active, archived, or deleted).
+        expr:
+          kind: path
+          path:
+            - state
+      - name: created_at
+        type: Utf8
+        nullable: true
+        description: ISO 8601 creation timestamp.
+        expr:
+          kind: path
+          path:
+            - created_at
+      - name: updated_at
+        type: Utf8
+        nullable: true
+        description: ISO 8601 last-updated timestamp.
+        expr:
+          kind: path
+          path:
+            - updated_at
+      - name: workspace_id
+        type: Utf8
+        nullable: true
+        description: ID of the workspace this board belongs to.
+        expr:
+          kind: path
+          path:
+            - workspace
+            - id
+      - name: workspace_name
+        type: Utf8
+        nullable: true
+        description: Display name of the workspace this board belongs to.
+        expr:
+          kind: path
+          path:
+            - workspace
+            - name
+      - name: raw
+        type: Json
+        nullable: true
+        description: Raw board object.
+        expr:
+          kind: current_row
+
+  - name: users
+    description: >-
+      Lists all non-guest users in the monday.com account. Returns user ID,
+      name, email, title, role flags, time zone, and creation timestamp.
+    guide: |
+      Use `email` to join with GitHub PR authors, Linear assignees, and
+      PagerDuty users for cross-source engineer identity resolution. Filter by
+      `is_admin = 'true'` to scope results to admins only.
+    request:
+      method: POST
+      path: /v2
+      body:
+        query: >-
+          { users(limit: 500, kind: non_guests) { id name email title is_admin
+          is_guest enabled created_at time_zone_identifier location } }
+    response:
+      rows_path:
+        - data
+        - users
+    pagination:
+      mode: none
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Unique user ID.
+        expr:
+          kind: path
+          path:
+            - id
+      - name: name
+        type: Utf8
+        nullable: true
+        description: User display name.
+        expr:
+          kind: path
+          path:
+            - name
+      - name: email
+        type: Utf8
+        nullable: true
+        description: User email address; join key with GitHub, Linear, and PagerDuty.
+        expr:
+          kind: path
+          path:
+            - email
+      - name: title
+        type: Utf8
+        nullable: true
+        description: Job title.
+        expr:
+          kind: path
+          path:
+            - title
+      - name: is_admin
+        type: Json
+        nullable: true
+        description: True when the user has account admin permissions.
+        expr:
+          kind: path
+          path:
+            - is_admin
+      - name: is_guest
+        type: Json
+        nullable: true
+        description: True when the user is a guest account.
+        expr:
+          kind: path
+          path:
+            - is_guest
+      - name: enabled
+        type: Json
+        nullable: true
+        description: True when the user account is active and not deactivated.
+        expr:
+          kind: path
+          path:
+            - enabled
+      - name: time_zone
+        type: Utf8
+        nullable: true
+        description: User time zone identifier, for example America/New_York.
+        expr:
+          kind: path
+          path:
+            - time_zone_identifier
+      - name: location
+        type: Utf8
+        nullable: true
+        description: User location string.
+        expr:
+          kind: path
+          path:
+            - location
+      - name: created_at
+        type: Utf8
+        nullable: true
+        description: ISO 8601 account creation timestamp.
+        expr:
+          kind: path
+          path:
+            - created_at
+      - name: raw
+        type: Json
+        nullable: true
+        description: Raw user object.
+        expr:
+          kind: current_row
+
+functions:
+  - name: board_items
+    description: >-
+      Fetch items (rows/tasks) for a specific monday.com board by board ID.
+      Returns up to 500 items including ID, name, state, group, and timestamps.
+      Obtain board IDs from `monday.boards`.
+    args:
+      - name: board_id
+        required: true
+        bind:
+          arg: board_id
+    request:
+      method: POST
+      path: /v2
+      body:
+        query: >-
+          { boards(ids: [{{arg.board_id}}]) { items_page(limit: 500) { items
+          { id name state created_at updated_at group { id title } } } } }
+    response:
+      rows_path:
+        - data
+        - boards
+        - "0"
+        - items_page
+        - items
+    pagination:
+      mode: none
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Item ID.
+        expr:
+          kind: path
+          path:
+            - id
+      - name: name
+        type: Utf8
+        nullable: true
+        description: Item name (the row title in the board).
+        expr:
+          kind: path
+          path:
+            - name
+      - name: state
+        type: Utf8
+        nullable: true
+        description: Item state (active, archived, or deleted).
+        expr:
+          kind: path
+          path:
+            - state
+      - name: group_id
+        type: Utf8
+        nullable: true
+        description: ID of the group (section) this item belongs to.
+        expr:
+          kind: path
+          path:
+            - group
+            - id
+      - name: group_title
+        type: Utf8
+        nullable: true
+        description: Title of the group (section) this item belongs to.
+        expr:
+          kind: path
+          path:
+            - group
+            - title
+      - name: created_at
+        type: Utf8
+        nullable: true
+        description: ISO 8601 creation timestamp.
+        expr:
+          kind: path
+          path:
+            - created_at
+      - name: updated_at
+        type: Utf8
+        nullable: true
+        description: ISO 8601 last-updated timestamp.
+        expr:
+          kind: path
+          path:
+            - updated_at
+      - name: raw
+        type: Json
+        nullable: true
+        description: Raw item object including all column values.
+        expr:
+          kind: current_row
+
+  - name: board_columns
+    description: >-
+      Fetch the column definitions for a specific monday.com board. Returns
+      column ID, title, type, and settings. Use column titles to interpret the
+      column values in items returned by `board_items`.
+    args:
+      - name: board_id
+        required: true
+        bind:
+          arg: board_id
+    request:
+      method: POST
+      path: /v2
+      body:
+        query: >-
+          { boards(ids: [{{arg.board_id}}]) { columns { id title type
+          description settings_str } } }
+    response:
+      rows_path:
+        - data
+        - boards
+        - "0"
+        - columns
+    pagination:
+      mode: none
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Column ID.
+        expr:
+          kind: path
+          path:
+            - id
+      - name: title
+        type: Utf8
+        nullable: true
+        description: Column display name (the header shown in the board).
+        expr:
+          kind: path
+          path:
+            - title
+      - name: type
+        type: Utf8
+        nullable: true
+        description: >-
+          Column type (for example status, text, date, numeric, people,
+          timeline, or checkbox).
+        expr:
+          kind: path
+          path:
+            - type
+      - name: description
+        type: Utf8
+        nullable: true
+        description: Column description.
+        expr:
+          kind: path
+          path:
+            - description
+      - name: settings_str
+        type: Utf8
+        nullable: true
+        description: >-
+          JSON-encoded column settings; for status columns this contains the
+          label-to-color mapping.
+        expr:
+          kind: path
+          path:
+            - settings_str
