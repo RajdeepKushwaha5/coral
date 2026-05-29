@@ -400,10 +400,11 @@ tables:
       Status codes: 2=Open, 3=Pending, 4=Resolved, 5=Closed
       Priority codes: 1=Low, 2=Medium, 3=High, 4=Urgent
 
-      Returns up to 300 tickets (Freshdesk API limit); narrow your query
-      if you expect more results.
+      Returns up to 300 tickets (Freshdesk API limit: max 10 pages × 30).
+      Narrow your query if you expect more results.
 
       Docs: https://developers.freshdesk.com/api/#filter_tickets
+    fetch_limit_default: 300
     filters:
       - name: query
         required: true
@@ -550,6 +551,14 @@ tables:
             kind: path
             path:
               - updated_at
+      - name: tags
+        type: Utf8
+        nullable: true
+        description: Comma-separated list of tag names
+        expr:
+          kind: join_array
+          path:
+            - tags
 
   - name: contacts
     description: >-

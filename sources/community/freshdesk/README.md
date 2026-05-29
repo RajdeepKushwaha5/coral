@@ -39,15 +39,52 @@ Your Freshdesk URL is `https://{domain}.freshdesk.com`. Enter just the subdomain
 ## Install
 
 ```bash
-coral source lint manifest.yaml
-coral source add --file manifest.yaml
-coral source test freshdesk
+FRESHDESK_DOMAIN=acme \
+FRESHDESK_API_KEY=your-key \
+coral source add --file sources/community/freshdesk/manifest.yaml
 ```
 
-Or with credentials inline:
+## Validation
 
 ```bash
-FRESHDESK_DOMAIN=acme FRESHDESK_API_KEY=your-key coral source add --file manifest.yaml
+# Add and run test query (output sanitized)
+coral source add --file sources/community/freshdesk/manifest.yaml
+# coral source test freshdesk produces the same output
+```
+
+```text
+  ✓ freshdesk connected successfully
+  Secrets: keyring
+
+    freshdesk (5 tables, 1 function)
+    ├─ agents
+    ├─ contacts
+    ├─ conversations (function)
+    ├─ groups
+    ├─ search_tickets
+    └─ tickets
+
+    Query tests
+    1 declared · 1 passed · 0 failed
+
+    ✓ SELECT id, name FROM freshdesk.groups LIMIT 1
+      1 row
+```
+
+```bash
+# Representative query (output sanitized)
+coral sql "SELECT id, subject, status, priority FROM freshdesk.search_tickets WHERE query = '\"(status:2 AND priority:3)\"' LIMIT 3"
+```
+
+```text
++---------+---------------------------------------+--------+----------+
+| id      | subject                               | status | priority |
++---------+---------------------------------------+--------+----------+
+| 1001234 | Payment gateway error on checkout     | 2      | 3        |
+| 1001187 | Unable to log in after password reset | 2      | 3        |
+| 1001052 | API rate limit exceeded in production | 2      | 3        |
++---------+---------------------------------------+--------+----------+
+3 rows
 ```
 
 ## Example Queries
