@@ -33,13 +33,12 @@ Requires a Google OAuth client ID and client secret with the
 3. Run the interactive setup:
 
 ```bash
-coral source add --interactive google_analytics \
-  --file sources/community/google_analytics/manifest.yaml
+coral source add --interactive --file sources/community/google_analytics/manifest.yaml
 ```
 
 Choose **Connect with Google**, then paste your `GOOGLE_OAUTH_CLIENT_ID` and
 `GOOGLE_OAUTH_CLIENT_SECRET` when prompted. Coral completes the PKCE OAuth
-flow locally and stores the access token.
+flow locally and stores the token.
 
 To paste an access token directly instead:
 
@@ -90,31 +89,21 @@ WHERE property_id = 'properties/987654321'
 LIMIT 10;
 ```
 
-### All web streams across all properties under one account
+### Web streams for a property
+
+`data_streams` requires a `property_id` filter — Coral cannot derive it from
+a join predicate. To browse streams across multiple properties, run one query
+per property ID returned by the step above.
 
 ```sql
-SELECT p.display_name AS property_name, ds.display_name AS stream_name, ds.web_uri, ds.measurement_id
-FROM google_analytics.properties p
-JOIN google_analytics.data_streams ds ON ds.property_id = p.property_id
-WHERE p.account_id = 'accounts/123456789'
-  AND ds.stream_type = 'WEB_DATA_STREAM'
-ORDER BY p.display_name;
+SELECT stream_id, stream_type, display_name, web_uri, measurement_id
+FROM google_analytics.data_streams
+WHERE property_id = 'properties/987654321'
+  AND stream_type = 'WEB_DATA_STREAM'
+LIMIT 20;
 ```
 
 ## Cross-source examples
-
-### GA4 web streams matched against domains with recent GitHub deploys
-
-```sql
-SELECT ds.web_uri, ds.measurement_id, COUNT(d.id) AS recent_deploys
-FROM google_analytics.data_streams ds
-JOIN github.deployments d ON LOWER(d.environment_url) LIKE '%' || LOWER(ds.web_uri) || '%'
-WHERE ds.stream_type = 'WEB_DATA_STREAM'
-  AND d.created_at >= '2026-05-01T00:00:00Z'
-GROUP BY 1, 2
-ORDER BY recent_deploys DESC
-LIMIT 20;
-```
 
 ### GA4 properties with open Sentry projects (join on slug/name similarity)
 
@@ -130,15 +119,64 @@ LIMIT 20;
 ## Validation
 
 ```bash
-# YAML style
+# YAML style check
 make lint-sources
 
-# Manifest structure smoke check
-coral source lint sources/community/google_analytics/manifest.yaml
+# Add interactively (output sanitized — real IDs and token redacted)
+coral source add --interactive --file sources/community/google_analytics/manifest.yaml
+```
 
-# Add and test
-coral source add --file sources/community/google_analytics/manifest.yaml
+```text
+  ✓ google_analytics connected successfully
+  Secrets: keyring
+
+    google_analytics (3 tables)
+    ├─ accounts
+    ├─ data_streams
+    └─ properties
+
+    Query tests
+    1 declared · 1 passed · 0 failed
+
+    ✓ SELECT account_id, display_name FROM google_analytics.accounts LIMIT 1
+      1 row
+```
+
+```bash
+# Run the built-in test query against the live account
 coral source test google_analytics
+```
+
+```text
+  ✓ google_analytics connected successfully
+  Secrets: keyring
+
+    google_analytics (3 tables)
+    ├─ accounts
+    ├─ data_streams
+    └─ properties
+
+    Query tests
+    1 declared · 1 passed · 0 failed
+
+    ✓ SELECT account_id, display_name FROM google_analytics.accounts LIMIT 1
+      1 row
+```
+
+```bash
+# Representative query — list accounts (output sanitized)
+coral sql "SELECT account_id, display_name, region_code FROM google_analytics.accounts LIMIT 3"
+```
+
+```text
++--------------------+-------------------------+-------------+
+| account_id         | display_name            | region_code |
++--------------------+-------------------------+-------------+
+| accounts/123456789 | Acme Corp Analytics     | US          |
+| accounts/234567890 | Staging Account         | US          |
+| accounts/345678901 | Mobile App Analytics    | GB          |
++--------------------+-------------------------+-------------+
+3 rows
 ```
 
 ## Limitations
@@ -151,9 +189,24 @@ coral source test google_analytics
   not supported; this source targets GA4 only.
 - **Soft-deleted items hidden** — `showDeleted: false` is the default; deleted
   accounts and properties are excluded from results.
+- **data_streams requires property_id** — Coral cannot derive required filters
+  from join predicates. Query `google_analytics.properties` first, then query
+  `google_analytics.data_streams` with a specific `property_id`.
 - **Resource name IDs** — all IDs use the API resource name format
   (`accounts/123456789`, `properties/987654321`), not bare numeric IDs.
+- **Rate limits and quotas** — the Analytics Admin API applies per-project and
+  per-user quotas. Default limits are 200 requests/minute/user for list
+  operations. If you hit quota, reduce `LIMIT` values or add delays between
+  queries. See the [Admin API quota guide](https://developers.google.com/analytics/devguides/config/admin/v1/quotas)
+  for current limits.
 - Community sources are maintained separately from bundled core sources.
+
+## API reference
+
+- [Accounts.list](https://developers.google.com/analytics/devguides/config/admin/v1/rest/v1beta/accounts/list)
+- [Properties.list](https://developers.google.com/analytics/devguides/config/admin/v1/rest/v1beta/properties/list)
+- [DataStreams.list](https://developers.google.com/analytics/devguides/config/admin/v1/rest/v1beta/properties.dataStreams/list)
+- [Admin API quotas](https://developers.google.com/analytics/devguides/config/admin/v1/quotas)
 
 ## Contributing
 
