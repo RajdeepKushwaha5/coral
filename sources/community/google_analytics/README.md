@@ -122,29 +122,9 @@ LIMIT 20;
 # YAML style check
 make lint-sources
 
-# Add interactively (output sanitized — real IDs and token redacted)
+# Add interactively and run test queries (output sanitized — real IDs and token redacted)
 coral source add --interactive --file sources/community/google_analytics/manifest.yaml
-```
-
-```text
-  ✓ google_analytics connected successfully
-  Secrets: keyring
-
-    google_analytics (3 tables)
-    ├─ accounts
-    ├─ data_streams
-    └─ properties
-
-    Query tests
-    1 declared · 1 passed · 0 failed
-
-    ✓ SELECT account_id, display_name FROM google_analytics.accounts LIMIT 1
-      1 row
-```
-
-```bash
-# Run the built-in test query against the live account
-coral source test google_analytics
+# coral source test google_analytics produces the same output
 ```
 
 ```text
