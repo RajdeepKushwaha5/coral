@@ -67,6 +67,61 @@ tables:
     }
 
     #[test]
+    fn validate_manifest_schema_accepts_one_of_bearer_auth_headers() {
+        let manifest = manifest_json(
+            r"
+name: demo
+version: 1.0.0
+dsl_version: 3
+backend: http
+base_url: https://example.com
+auth:
+  type: HeaderAuth
+  headers:
+    - name: Authorization
+      from: one_of
+      values:
+        - from: input
+          key: API_KEY
+        - from: bearer
+          key: OAUTH_TOKEN
+tables:
+  - name: messages
+    description: Demo messages
+    request:
+      method: GET
+      path: /messages
+",
+        );
+        validate_manifest_schema(&manifest)
+            .expect("one_of bearer auth header should pass schema validation");
+    }
+
+    #[test]
+    fn validate_manifest_schema_accepts_legacy_search_filter_mode() {
+        let manifest = manifest_json(
+            r"
+name: demo
+version: 1.0.0
+dsl_version: 3
+backend: http
+base_url: https://example.com
+tables:
+  - name: messages
+    description: Demo messages
+    filters:
+      - name: query
+        mode: search
+    request:
+      method: GET
+      path: /messages
+",
+        );
+        validate_manifest_schema(&manifest)
+            .expect("legacy search filter mode should pass schema validation");
+    }
+
+    #[test]
     fn parse_source_manifest_yaml_accepts_http_table_search_metadata() {
         parse_source_manifest_yaml(
             r"
@@ -80,7 +135,6 @@ tables:
     description: Demo messages
     filters:
       - name: query
-        mode: search
       - name: id
     search_limits:
       default_top_k: 5
@@ -165,10 +219,11 @@ tables:
 name: demo
 version: 1.0.0
 dsl_version: 3
-backend: parquet
+backend: file
 tables:
   - name: messages
     description: Demo messages
+    format: parquet
     source:
       location: file:///tmp/messages.parquet
     search_limits:
