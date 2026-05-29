@@ -190,6 +190,7 @@ SELECT name,
        ROUND(SUM(total_cost), 4) AS total_cost_usd,
        ROUND(AVG(latency), 2)    AS avg_latency_s
 FROM langfuse.traces
+GROUP BY name
 ORDER BY total_cost_usd DESC
 LIMIT 20;
 ```
@@ -371,8 +372,8 @@ FROM langfuse.traces t
 JOIN sentry.issues s
   ON CAST(s.first_seen AS TIMESTAMP) >= CAST(t.timestamp AS TIMESTAMP)
   AND CAST(s.first_seen AS TIMESTAMP) <= CAST(t.timestamp AS TIMESTAMP) + INTERVAL '1 hour'
-  AND s.query = 'is:unresolved'
-WHERE t.total_cost > 0.10
+WHERE s.query = 'is:unresolved'
+  AND t.total_cost > 0.10
 ORDER BY t.total_cost DESC
 LIMIT 20;
 ```
@@ -400,7 +401,7 @@ observations
 - `traces.latency` and `observations.latency` are in **seconds** (not milliseconds).
 - `traces.metadata` is a JSON object your application attaches at trace creation. Use `json_get_str(metadata, 'key')` to extract fields. This is the primary mechanism for linking traces to Linear tickets, GitHub PRs, or other business context.
 - `traces.input` and `traces.output` contain the raw LLM input/output payload. These can be large; avoid selecting them in high-volume aggregation queries.
-- `fetch_limit_default` is 500 for traces, 1000 for observations, 500 for scores, and 200 for sessions. Use `from_timestamp` / `to_start_time` filters to work within a specific time window for large projects.
+- `fetch_limit_default` is 500 for traces, 1000 for observations, 500 for scores, and 200 for sessions. Use `from_timestamp` / `to_timestamp` (traces) or `from_start_time` / `to_start_time` (observations) to work within a specific time window for large projects.
 - All timestamp columns are ISO 8601 strings. Cast with `CAST(timestamp AS TIMESTAMP)` for date arithmetic.
 - Rate limits vary by Langfuse plan. The connector handles `429` responses automatically via `Retry-After`.
 
