@@ -155,7 +155,7 @@ make lint-sources
 coral source add --file sources/community/mailchimp/manifest.yaml
 ```
 
-```
+```text
   ✓ mailchimp connected successfully
   Secrets: keyring
 
@@ -177,7 +177,7 @@ coral source add --file sources/community/mailchimp/manifest.yaml
 coral source test mailchimp
 ```
 
-```
+```text
   ✓ mailchimp connected successfully
   Secrets: keyring
 
@@ -199,7 +199,7 @@ coral source test mailchimp
 coral sql "SELECT id, name, subscriber_count, open_rate FROM mailchimp.lists LIMIT 3"
 ```
 
-```
+```text
 +------------------+---------------------+------------------+-----------+
 | id               | name                | subscriber_count | open_rate |
 +------------------+---------------------+------------------+-----------+
