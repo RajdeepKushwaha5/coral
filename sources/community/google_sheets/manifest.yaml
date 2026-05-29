@@ -10,15 +10,15 @@ description: >-
 base_url: https://sheets.googleapis.com
 
 inputs:
-  GOOGLE_SHEETS_TOKEN:
+  GOOGLE_SHEETS_ACCESS_TOKEN:
     kind: secret
     hint: |
       A valid Google OAuth access token with the
       `https://www.googleapis.com/auth/spreadsheets.readonly` scope.
 
       To connect interactively, choose "Connect with Google" and provide a
-      Google OAuth client ID and client secret when prompted. Access tokens
-      expire; re-add the source with
+      Google Sheets OAuth client ID and client secret when prompted. Access
+      tokens expire; re-add the source with
       `coral source add --interactive --file sources/community/google_sheets/manifest.yaml`
       when the stored token needs to be replaced.
 
@@ -28,7 +28,7 @@ inputs:
       methods:
         - type: oauth
           label: Connect with Google
-          description: Use a Google OAuth client ID and client secret.
+          description: Use a Google Sheets OAuth client ID and client secret.
           oauth:
             flow:
               type: authorization_code
@@ -40,9 +40,9 @@ inputs:
               token_url: https://oauth2.googleapis.com/token
             client:
               id:
-                input: GOOGLE_OAUTH_CLIENT_ID
+                input: GOOGLE_SHEETS_OAUTH_CLIENT_ID
               secret:
-                input: GOOGLE_OAUTH_CLIENT_SECRET
+                input: GOOGLE_SHEETS_OAUTH_CLIENT_SECRET
                 transport: request_body
             scopes:
               scope:
@@ -57,7 +57,7 @@ auth:
   headers:
     - name: Authorization
       from: template
-      template: Bearer {{input.GOOGLE_SHEETS_TOKEN}}
+      template: Bearer {{input.GOOGLE_SHEETS_ACCESS_TOKEN}}
 
 request_headers:
   - name: Accept
@@ -71,17 +71,13 @@ rate_limit:
 
 test_queries:
   - >-
-    SELECT function_name, arg_names
-    FROM coral.table_functions
-    WHERE schema_name = 'google_sheets'
-    ORDER BY function_name
-    LIMIT 1
+    SELECT spreadsheet_id, title, locale, time_zone
+    FROM google_sheets.spreadsheet_info
+    WHERE spreadsheet_id = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms'
   - >-
-    SELECT table_name
-    FROM coral.tables
-    WHERE schema_name = 'google_sheets'
-    ORDER BY table_name
-    LIMIT 1
+    SELECT spreadsheet_id, range, row_data
+    FROM google_sheets.get_values('1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms', 'Class Data!A1:E2')
+    LIMIT 2
 
 tables:
   - name: spreadsheet_info
@@ -361,6 +357,20 @@ functions:
       FORMATTED_VALUE strings — use `json_get_str(row_data, 0)` to extract
       individual cells by zero-based column index. Specify the range in A1
       notation such as `Sheet1!A1:D10` or a named range.
+    guide: |
+      Both spreadsheet_id and range arguments are required. The range uses A1
+      notation: Sheet1!A1:D10, or just A1:D10 for the first sheet, or a named
+      range. Results always use ROWS as the major dimension (one array per row).
+
+      spreadsheet_id echoes the argument; range echoes the requested range.
+      The Sheets API may return a narrower range than requested when the sheet
+      has fewer rows or columns — the actual returned range and majorDimension
+      are response-envelope fields outside the per-row values array and cannot
+      be surfaced as additional columns by the Coral DSL. They are always ROWS.
+
+      Extract individual cells from row_data by zero-based column index:
+        json_get_str(row_data, 0)  -- first column
+        json_get_str(row_data, 1)  -- second column
     args:
       - name: spreadsheet_id
         required: true
@@ -386,6 +396,22 @@ functions:
     pagination:
       mode: none
     columns:
+      - name: spreadsheet_id
+        type: Utf8
+        nullable: false
+        description: Spreadsheet ID passed as the first argument.
+        expr:
+          kind: from_arg
+          arg: spreadsheet_id
+        virtual: true
+      - name: range
+        type: Utf8
+        nullable: false
+        description: Range argument passed to the function (A1 notation).
+        expr:
+          kind: from_arg
+          arg: range
+        virtual: true
       - name: row_data
         type: Json
         nullable: true
