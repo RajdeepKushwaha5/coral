@@ -48,7 +48,9 @@ tables:
       plan, MRR, billing cycle, and term dates. Use customer_id to join
       with chargebee.customers and plan_id to join with chargebee.plans.
     guide: |
-      No required filters. Returns all subscriptions in the site.
+      Use status, customer_id, and plan_id filters to push conditions to the
+      Chargebee API so fewer pages are fetched. Without filters, all
+      subscriptions in the site are returned (up to fetch_limit_default).
 
       status values:
         active        — currently active and billing
@@ -60,16 +62,27 @@ tables:
 
       billing_period_unit values: day, week, month, year
       mrr and plan amounts are in the smallest currency unit (e.g. cents for USD).
-
-      Example:
-        SELECT id, customer_id, plan_id, status, mrr, current_term_end
-        FROM chargebee.subscriptions
-        WHERE status = 'active'
-        ORDER BY mrr DESC
-        LIMIT 50
+    fetch_limit_default: 100
+    filters:
+      - name: status
+        required: false
+      - name: customer_id
+        required: false
+      - name: plan_id
+        required: false
     request:
       method: GET
       path: /api/v2/subscriptions
+      query:
+        - name: "status[is]"
+          from: filter
+          key: status
+        - name: "customer_id[is]"
+          from: filter
+          key: customer_id
+        - name: "plan_id[is]"
+          from: filter
+          key: plan_id
     response:
       rows_path:
         - list
@@ -279,21 +292,24 @@ tables:
       auto-collection setting, and MRR. Use id to join with
       chargebee.subscriptions and chargebee.invoices.
     guide: |
-      No required filters. Returns all customers in the site.
+      Use the email filter to push a condition to the Chargebee API and look
+      up a specific customer. Without filters, all customers in the site are
+      returned (up to fetch_limit_default).
 
       auto_collection values: on (automatic charging), off (manual collection)
       taxability values: taxable, exempt
       mrr is in the smallest currency unit (e.g. cents for USD).
-
-      Example:
-        SELECT id, email, company, mrr, currency_code
-        FROM chargebee.customers
-        WHERE mrr > 0
-        ORDER BY mrr DESC
-        LIMIT 50
+    fetch_limit_default: 100
+    filters:
+      - name: email
+        required: false
     request:
       method: GET
       path: /api/v2/customers
+      query:
+        - name: "email[is]"
+          from: filter
+          key: email
     response:
       rows_path:
         - list
@@ -422,7 +438,9 @@ tables:
       and payment timestamps. Use customer_id and subscription_id to join
       with other chargebee tables.
     guide: |
-      No required filters. Returns all invoices in the site, most recent first.
+      Use status and customer_id filters to push conditions to the Chargebee
+      API so fewer pages are fetched. Without filters, all invoices in the
+      site are returned (up to fetch_limit_default).
 
       status values:
         paid         — fully paid
@@ -435,15 +453,22 @@ tables:
       recurring = true means this invoice was generated for a subscription renewal.
       All amount fields are in the smallest currency unit (e.g. cents for USD).
       date, due_date, and paid_at are Unix epoch seconds.
-
-      Example:
-        SELECT id, customer_id, subscription_id, status, total, currency_code, paid_at
-        FROM chargebee.invoices
-        WHERE status = 'payment_due'
-        ORDER BY due_date ASC
+    fetch_limit_default: 100
+    filters:
+      - name: status
+        required: false
+      - name: customer_id
+        required: false
     request:
       method: GET
       path: /api/v2/invoices
+      query:
+        - name: "status[is]"
+          from: filter
+          key: status
+        - name: "customer_id[is]"
+          from: filter
+          key: customer_id
     response:
       rows_path:
         - list
@@ -617,22 +642,26 @@ tables:
       pricing, billing cycle, and trial configuration. Use plan_id from
       chargebee.subscriptions to look up plan details.
     guide: |
-      No required filters. Returns all plans in the site.
+      Use the status filter to push a condition to the Chargebee API and
+      fetch only active or archived plans. Without filters, all plans in
+      the site are returned (up to fetch_limit_default).
 
       status values: active, archived
       period_unit values: day, week, month, year
-      charge_model values: flat_fee, per_unit, tiered, volume, stairstep
-      price, and mrr are in the smallest currency unit (e.g. cents for USD).
+      pricing_model values: flat_fee, per_unit, tiered, volume, stairstep
+      price is in the smallest currency unit (e.g. cents for USD).
       billing_cycles = null means the subscription renews indefinitely.
-
-      Example:
-        SELECT id, name, price, period, period_unit, status
-        FROM chargebee.plans
-        WHERE status = 'active'
-        ORDER BY price DESC
+    fetch_limit_default: 100
+    filters:
+      - name: status
+        required: false
     request:
       method: GET
       path: /api/v2/plans
+      query:
+        - name: "status[is]"
+          from: filter
+          key: status
     response:
       rows_path:
         - list
@@ -736,7 +765,7 @@ tables:
           path:
             - plan
             - trial_period_unit
-      - name: charge_model
+      - name: pricing_model
         type: Utf8
         nullable: true
         description: Pricing model (flat_fee, per_unit, tiered, volume, stairstep)
@@ -744,7 +773,7 @@ tables:
           kind: path
           path:
             - plan
-            - charge_model
+            - pricing_model
       - name: free_quantity
         type: Int64
         nullable: true

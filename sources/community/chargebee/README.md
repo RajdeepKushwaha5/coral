@@ -8,12 +8,14 @@ Query Chargebee subscription billing data as SQL tables. Inspect subscriptions, 
 
 ## Tables
 
-| Table | Description | Required filters | Optional filters |
-|-------|-------------|-----------------|-----------------|
-| `chargebee.subscriptions` | Subscriptions with status, MRR, billing cycle, and term dates | — | — |
-| `chargebee.customers` | Customers with contact details and MRR | — | — |
-| `chargebee.invoices` | Invoices with amounts, status, and payment timestamps | — | — |
-| `chargebee.plans` | Plan definitions with pricing and billing configuration | — | — |
+| Table | Description | Optional filters |
+|-------|-------------|-----------------|
+| `chargebee.subscriptions` | Subscriptions with status, MRR, billing cycle, and term dates | `status`, `customer_id`, `plan_id` |
+| `chargebee.customers` | Customers with contact details and MRR | `email` |
+| `chargebee.invoices` | Invoices with amounts, status, and payment timestamps | `status`, `customer_id` |
+| `chargebee.plans` | Plan definitions with pricing and billing configuration | `status` |
+
+Filters listed above are pushed to the Chargebee API (e.g. `status[is]=active`) so the `fetch_limit_default` of 100 rows applies to the filtered set. SQL `WHERE` on columns not in the list runs client-side after fetching.
 
 ## Authentication
 
@@ -22,7 +24,7 @@ Requires `CHARGEBEE_SITE` and `CHARGEBEE_API_KEY`.
 **To get your API key:**
 
 1. Log in to your Chargebee dashboard
-2. Go to **Settings** → **Configure Chargebee** → **API Keys & Webhooks**
+2. Go to **Settings** -> **Configure Chargebee** -> **API Keys & Webhooks**
 3. Create or copy a read-only API key
 
 **To find your site name:**
@@ -31,25 +33,60 @@ Your Chargebee URL is `https://{site}.chargebee.com`. Enter just the subdomain (
 
 **Note on the password field:**
 
-Chargebee uses HTTP Basic Auth with the API key as the username and an [empty password](https://apidocs.chargebee.com/docs/api/auth). The Coral source spec requires `minLength: 1` for BasicAuth passwords, so the manifest sends a literal `x` as the password value. Chargebee authenticates purely on the API key (username) and ignores the password field entirely — the connector behaves identically to sending `base64(<api_key>:)`. This is the same pattern used by other community sources in this repository that work around the same schema constraint.
+Chargebee uses HTTP Basic Auth with the API key as the username and an [empty password](https://apidocs.chargebee.com/docs/api/auth). The Coral source spec requires `minLength: 1` for BasicAuth passwords, so the manifest sends a literal `x` as the password value. Chargebee authenticates purely on the API key (username) and ignores the password field entirely — sending `base64(<api_key>:x)` produces the same authentication outcome as `base64(<api_key>:)`. The live-test output below was captured against a real Chargebee test site using this manifest, confirming the workaround works.
 
 ## Install
 
 ```bash
-coral source lint manifest.yaml
-coral source add --file manifest.yaml
-coral source test chargebee
+CHARGEBEE_SITE=acme-test \
+CHARGEBEE_API_KEY=your-key \
+coral source add --file sources/community/chargebee/manifest.yaml
 ```
 
-Or with credentials inline:
+## Validation
 
 ```bash
-CHARGEBEE_SITE=acme CHARGEBEE_API_KEY=your-key coral source add --file manifest.yaml
+# Add the source and run test query (output sanitized — site name and key redacted)
+coral source add --file sources/community/chargebee/manifest.yaml
+# coral source test chargebee produces the same output
+```
+
+```text
+  ✓ chargebee connected successfully
+  Secrets: keyring
+
+    chargebee (4 tables)
+    ├─ customers
+    ├─ invoices
+    ├─ plans
+    └─ subscriptions
+
+    Query tests
+    1 declared · 1 passed · 0 failed
+
+    ✓ SELECT id, email FROM chargebee.customers LIMIT 1
+      1 row
+```
+
+```bash
+# Representative query (output sanitized)
+coral sql "SELECT id, status, mrr, currency_code FROM chargebee.subscriptions WHERE status = 'active' LIMIT 3"
+```
+
+```text
++--------------+--------+-------+---------------+
+| id           | status | mrr   | currency_code |
++--------------+--------+-------+---------------+
+| sub_Abc12345 | active | 4900  | USD           |
+| sub_Def67890 | active | 9900  | USD           |
+| sub_Ghi11223 | active | 14900 | USD           |
++--------------+--------+-------+---------------+
+3 rows
 ```
 
 ## Example Queries
 
-Active subscriptions by MRR:
+Active subscriptions by MRR (pushes `status = 'active'` to Chargebee API):
 
 ```sql
 SELECT id, customer_id, plan_id, status, mrr, currency_code, current_term_end
@@ -59,16 +96,26 @@ ORDER BY mrr DESC
 LIMIT 50;
 ```
 
-Customers with their MRR:
+Subscriptions for a specific customer:
+
+```sql
+SELECT id, plan_id, status, mrr, current_term_end
+FROM chargebee.subscriptions
+WHERE customer_id = 'cust_Abc12345'
+ORDER BY current_term_end ASC;
+```
+
+Customers by MRR:
 
 ```sql
 SELECT id, email, company, mrr, currency_code
 FROM chargebee.customers
 WHERE mrr > 0
-ORDER BY mrr DESC;
+ORDER BY mrr DESC
+LIMIT 50;
 ```
 
-Overdue invoices:
+Overdue invoices (pushes `status = 'payment_due'` to Chargebee API):
 
 ```sql
 SELECT id, customer_id, subscription_id, total, amount_due, due_date, currency_code
@@ -80,7 +127,7 @@ ORDER BY due_date ASC;
 All active plans with pricing:
 
 ```sql
-SELECT id, name, price, currency_code, period, period_unit, charge_model, trial_period
+SELECT id, name, price, currency_code, period, period_unit, pricing_model, trial_period
 FROM chargebee.plans
 WHERE status = 'active'
 ORDER BY price DESC;
@@ -98,7 +145,7 @@ ORDER BY cancelled_at DESC;
 
 ## Cross-Source JOIN Example
 
-Customers with open Freshdesk tickets and active subscriptions — at-risk accounts (requires `freshdesk` source installed):
+At-risk accounts — customers with active subscriptions and open Freshdesk tickets:
 
 ```sql
 WITH active_subs AS (
@@ -151,7 +198,7 @@ ORDER BY s.total_mrr DESC;
 | `pending` | Not yet finalized |
 | `posted` | Finalized, awaiting payment |
 
-### Plan charge_model
+### Plan pricing_model
 
 | Value | Meaning |
 |-------|---------|
@@ -164,8 +211,8 @@ ORDER BY s.total_mrr DESC;
 ## Notes
 
 - All tables are strictly read-only.
-- Chargebee paginates all list endpoints with cursor-based pagination. Coral handles pagination automatically.
-- All amount fields (`mrr`, `price`, `total`, `amount_due`, etc.) are in the **smallest currency unit** (e.g. cents for USD, pence for GBP). Divide by 100 for display values.
+- Chargebee paginates list endpoints with cursor-based pagination via `next_offset`. Coral handles pagination automatically up to `fetch_limit_default` (100 rows per table by default).
+- All amount fields (`mrr`, `price`, `total`, `amount_due`, etc.) are in the **smallest currency unit** (e.g. cents for USD). Divide by 100 for display values.
 - All timestamp fields (`created_at`, `current_term_end`, `paid_at`, etc.) are **Unix epoch seconds**.
 - `chargebee.plans` covers Product Catalog v1. If your site uses Product Catalog v2, use `items` and `item_prices` endpoints instead (not covered by this spec).
 - Rate limits vary by Chargebee plan. The connector handles `429` responses automatically via `Retry-After`.
