@@ -19,11 +19,16 @@ inputs:
   SALESFORCE_ACCESS_TOKEN:
     kind: secret
     hint: |
-      A Salesforce connected app access token. To generate one:
-        1. Create a Connected App under Setup → App Manager → New Connected App.
-        2. Enable OAuth settings with the api scope.
-        3. Retrieve a token via the Username-Password flow or Salesforce CLI:
+      A Salesforce access token. To generate one:
+        1. Create a Connected App under Setup -> App Manager -> New Connected App.
+        2. Enable OAuth settings with the `api` scope.
+        3. Retrieve a token via the Salesforce CLI:
            sf org display --target-org <alias>
+      The token's user must have API Access enabled in their profile and Read
+      permission on Account, Contact, Lead, Opportunity, and Case objects with
+      field-level visibility for all queried fields. A 401 means the token is
+      expired; a 403 INSUFFICIENT_ACCESS means the user lacks the required
+      object or field permissions.
       See https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/quickstart_oauth.htm
 
 auth:
@@ -41,6 +46,7 @@ request_headers:
 rate_limit:
   extra_statuses:
     - 429
+    - 403
 
 test_queries:
   - SELECT id, name FROM salesforce.accounts LIMIT 1
@@ -52,10 +58,14 @@ tables:
       recently modified. Returns name, type, industry, revenue, owner, billing
       location, and timestamps.
     guide: |
-      Use account_id on contacts, opportunities, and cases to join back to this
-      table. Results are ordered by LastModifiedDate DESC and capped at 2000 rows.
-      SQL WHERE clauses run client-side after fetching; orgs with more than 2000
-      accounts may see incomplete results when filtering.
+      Use the industry filter to push a condition into SOQL and fetch accounts
+      in a specific vertical. Without it, results are the 2000 most recently
+      modified accounts and SQL WHERE runs client-side — orgs with more than
+      2000 accounts may see incomplete results. Use account_id on contacts,
+      opportunities, and cases to join back to this table.
+    filters:
+      - name: industry
+        required: false
     request:
       method: GET
       path: /services/data/v59.0/query
@@ -67,6 +77,20 @@ tables:
             Phone,Website,BillingCity,BillingCountry,OwnerId,
             CreatedDate,LastModifiedDate FROM Account
             ORDER BY LastModifiedDate DESC LIMIT 2000
+    requests:
+      - when_filters:
+          - industry
+        method: GET
+        path: /services/data/v59.0/query
+        query:
+          - name: q
+            from: template
+            template: >-
+              SELECT Id,Name,Type,Industry,AnnualRevenue,NumberOfEmployees,
+              Phone,Website,BillingCity,BillingCountry,OwnerId,
+              CreatedDate,LastModifiedDate FROM Account
+              WHERE Industry = '{{filter.industry}}'
+              ORDER BY LastModifiedDate DESC LIMIT 2000
     response:
       rows_path:
         - records
@@ -106,9 +130,9 @@ tables:
           path:
             - Industry
       - name: annual_revenue
-        type: Utf8
+        type: Float64
         nullable: true
-        description: Annual revenue in account currency.
+        description: Annual revenue in account currency (Salesforce currency field).
         expr:
           kind: path
           path:
@@ -190,9 +214,14 @@ tables:
       2000 most recently modified. Returns name, email, phone, account, owner,
       and timestamps. Primary join key with external sources is email.
     guide: |
-      Join on email with GitHub PR authors, Linear assignees, and PagerDuty
-      users for cross-source identity resolution. Use account_id to join with
-      salesforce.accounts.
+      Use the account_id filter to push a condition into SOQL and fetch only
+      contacts for a specific account. Without it, results are the 2000 most
+      recently modified contacts and SQL WHERE runs client-side. Join on email
+      with GitHub PR authors, Linear assignees, and PagerDuty users for
+      cross-source identity resolution.
+    filters:
+      - name: account_id
+        required: false
     request:
       method: GET
       path: /services/data/v59.0/query
@@ -203,6 +232,19 @@ tables:
             SELECT Id,FirstName,LastName,Email,Phone,MobilePhone,Title,
             Department,AccountId,OwnerId,CreatedDate,LastModifiedDate
             FROM Contact ORDER BY LastModifiedDate DESC LIMIT 2000
+    requests:
+      - when_filters:
+          - account_id
+        method: GET
+        path: /services/data/v59.0/query
+        query:
+          - name: q
+            from: template
+            template: >-
+              SELECT Id,FirstName,LastName,Email,Phone,MobilePhone,Title,
+              Department,AccountId,OwnerId,CreatedDate,LastModifiedDate
+              FROM Contact WHERE AccountId = '{{filter.account_id}}'
+              ORDER BY LastModifiedDate DESC LIMIT 2000
     response:
       rows_path:
         - records
@@ -318,10 +360,17 @@ tables:
       accounts), up to 2000 most recently modified. Returns name, email,
       company, status, source, and conversion state.
     guide: |
-      is_converted is true once the lead has been converted to an Account and
-      Contact. Use email to join against marketing or product analytics sources.
-      SQL filters on status and is_converted run client-side after fetching up
-      to 2000 rows; orgs with more than 2000 leads may see incomplete results.
+      Use is_converted and lead_source filters to push conditions into SOQL
+      so the 2000-row cap applies to the filtered set. is_converted is true
+      once the lead has been converted to an Account and Contact. Use email to
+      join against marketing or product analytics sources. Without filters,
+      results are the 2000 most recently modified leads and SQL WHERE runs
+      client-side — large orgs may see incomplete results.
+    filters:
+      - name: is_converted
+        required: false
+      - name: lead_source
+        required: false
     request:
       method: GET
       path: /services/data/v59.0/query
@@ -334,6 +383,51 @@ tables:
             ConvertedAccountId,ConvertedContactId,ConvertedOpportunityId,
             CreatedDate,LastModifiedDate FROM Lead
             ORDER BY LastModifiedDate DESC LIMIT 2000
+    requests:
+      - when_filters:
+          - is_converted
+          - lead_source
+        method: GET
+        path: /services/data/v59.0/query
+        query:
+          - name: q
+            from: template
+            template: >-
+              SELECT Id,FirstName,LastName,Email,Company,Status,LeadSource,
+              Industry,Phone,OwnerId,IsConverted,ConvertedDate,
+              ConvertedAccountId,ConvertedContactId,ConvertedOpportunityId,
+              CreatedDate,LastModifiedDate FROM Lead
+              WHERE IsConverted = {{filter.is_converted}}
+              AND LeadSource = '{{filter.lead_source}}'
+              ORDER BY LastModifiedDate DESC LIMIT 2000
+      - when_filters:
+          - is_converted
+        method: GET
+        path: /services/data/v59.0/query
+        query:
+          - name: q
+            from: template
+            template: >-
+              SELECT Id,FirstName,LastName,Email,Company,Status,LeadSource,
+              Industry,Phone,OwnerId,IsConverted,ConvertedDate,
+              ConvertedAccountId,ConvertedContactId,ConvertedOpportunityId,
+              CreatedDate,LastModifiedDate FROM Lead
+              WHERE IsConverted = {{filter.is_converted}}
+              ORDER BY LastModifiedDate DESC LIMIT 2000
+      - when_filters:
+          - lead_source
+        method: GET
+        path: /services/data/v59.0/query
+        query:
+          - name: q
+            from: template
+            template: >-
+              SELECT Id,FirstName,LastName,Email,Company,Status,LeadSource,
+              Industry,Phone,OwnerId,IsConverted,ConvertedDate,
+              ConvertedAccountId,ConvertedContactId,ConvertedOpportunityId,
+              CreatedDate,LastModifiedDate FROM Lead
+              WHERE LeadSource = '{{filter.lead_source}}'
+              ORDER BY LastModifiedDate DESC LIMIT 2000
     response:
       rows_path:
         - records
@@ -489,10 +583,16 @@ tables:
       most recently modified. Returns stage, amount, close date, account, and
       win/loss state.
     guide: |
-      Join account_id with salesforce.accounts to get company context.
+      Use is_closed and account_id filters to push conditions into SOQL so the
+      2000-row cap applies to the filtered set, not the full pipeline.
       close_date is a YYYY-MM-DD string; cast to DATE for date arithmetic.
-      SQL filters on is_closed and stage_name run client-side after fetching up
-      to 2000 rows; orgs with large pipelines may see incomplete results.
+      Without filters, results are the 2000 most recently modified opportunities
+      and SQL WHERE runs client-side — large orgs may see incomplete results.
+    filters:
+      - name: is_closed
+        required: false
+      - name: account_id
+        required: false
     request:
       method: GET
       path: /services/data/v59.0/query
@@ -504,6 +604,48 @@ tables:
             IsWon,Probability,Type,LeadSource,OwnerId,
             CreatedDate,LastModifiedDate FROM Opportunity
             ORDER BY LastModifiedDate DESC LIMIT 2000
+    requests:
+      - when_filters:
+          - is_closed
+          - account_id
+        method: GET
+        path: /services/data/v59.0/query
+        query:
+          - name: q
+            from: template
+            template: >-
+              SELECT Id,Name,AccountId,StageName,Amount,CloseDate,IsClosed,
+              IsWon,Probability,Type,LeadSource,OwnerId,
+              CreatedDate,LastModifiedDate FROM Opportunity
+              WHERE IsClosed = {{filter.is_closed}}
+              AND AccountId = '{{filter.account_id}}'
+              ORDER BY LastModifiedDate DESC LIMIT 2000
+      - when_filters:
+          - is_closed
+        method: GET
+        path: /services/data/v59.0/query
+        query:
+          - name: q
+            from: template
+            template: >-
+              SELECT Id,Name,AccountId,StageName,Amount,CloseDate,IsClosed,
+              IsWon,Probability,Type,LeadSource,OwnerId,
+              CreatedDate,LastModifiedDate FROM Opportunity
+              WHERE IsClosed = {{filter.is_closed}}
+              ORDER BY LastModifiedDate DESC LIMIT 2000
+      - when_filters:
+          - account_id
+        method: GET
+        path: /services/data/v59.0/query
+        query:
+          - name: q
+            from: template
+            template: >-
+              SELECT Id,Name,AccountId,StageName,Amount,CloseDate,IsClosed,
+              IsWon,Probability,Type,LeadSource,OwnerId,
+              CreatedDate,LastModifiedDate FROM Opportunity
+              WHERE AccountId = '{{filter.account_id}}'
+              ORDER BY LastModifiedDate DESC LIMIT 2000
     response:
       rows_path:
         - records
@@ -543,9 +685,9 @@ tables:
           path:
             - StageName
       - name: amount
-        type: Utf8
+        type: Float64
         nullable: true
-        description: Deal value in account currency.
+        description: Deal value in account currency (Salesforce currency field).
         expr:
           kind: path
           path:
@@ -575,9 +717,9 @@ tables:
           path:
             - IsWon
       - name: probability
-        type: Utf8
+        type: Float64
         nullable: true
-        description: Probability of winning as a percentage (0-100).
+        description: Probability of winning as a percentage (0-100, Salesforce percent field).
         expr:
           kind: path
           path:
@@ -635,10 +777,19 @@ tables:
       recently modified. Returns subject, status, priority, origin, account,
       contact, and timestamps.
     guide: |
+      Use is_closed, priority, and account_id filters to push conditions into
+      SOQL so the 2000-row cap applies to the filtered set, not all cases.
       Join account_id with salesforce.accounts and contact_id with
-      salesforce.contacts to get full customer context. SQL filters such as
-      is_closed = false run client-side after fetching up to 2000 rows; orgs
-      with large case volumes may see incomplete results when filtering.
+      salesforce.contacts to get full customer context. Without filters,
+      results are the 2000 most recently modified cases and SQL WHERE runs
+      client-side — large orgs may see incomplete results.
+    filters:
+      - name: is_closed
+        required: false
+      - name: priority
+        required: false
+      - name: account_id
+        required: false
     request:
       method: GET
       path: /services/data/v59.0/query
@@ -649,6 +800,57 @@ tables:
             SELECT Id,Subject,Status,Priority,Origin,Type,AccountId,
             ContactId,OwnerId,IsClosed,CreatedDate,LastModifiedDate
             FROM Case ORDER BY LastModifiedDate DESC LIMIT 2000
+    requests:
+      - when_filters:
+          - is_closed
+          - priority
+        method: GET
+        path: /services/data/v59.0/query
+        query:
+          - name: q
+            from: template
+            template: >-
+              SELECT Id,Subject,Status,Priority,Origin,Type,AccountId,
+              ContactId,OwnerId,IsClosed,CreatedDate,LastModifiedDate
+              FROM Case WHERE IsClosed = {{filter.is_closed}}
+              AND Priority = '{{filter.priority}}'
+              ORDER BY LastModifiedDate DESC LIMIT 2000
+      - when_filters:
+          - is_closed
+        method: GET
+        path: /services/data/v59.0/query
+        query:
+          - name: q
+            from: template
+            template: >-
+              SELECT Id,Subject,Status,Priority,Origin,Type,AccountId,
+              ContactId,OwnerId,IsClosed,CreatedDate,LastModifiedDate
+              FROM Case WHERE IsClosed = {{filter.is_closed}}
+              ORDER BY LastModifiedDate DESC LIMIT 2000
+      - when_filters:
+          - priority
+        method: GET
+        path: /services/data/v59.0/query
+        query:
+          - name: q
+            from: template
+            template: >-
+              SELECT Id,Subject,Status,Priority,Origin,Type,AccountId,
+              ContactId,OwnerId,IsClosed,CreatedDate,LastModifiedDate
+              FROM Case WHERE Priority = '{{filter.priority}}'
+              ORDER BY LastModifiedDate DESC LIMIT 2000
+      - when_filters:
+          - account_id
+        method: GET
+        path: /services/data/v59.0/query
+        query:
+          - name: q
+            from: template
+            template: >-
+              SELECT Id,Subject,Status,Priority,Origin,Type,AccountId,
+              ContactId,OwnerId,IsClosed,CreatedDate,LastModifiedDate
+              FROM Case WHERE AccountId = '{{filter.account_id}}'
+              ORDER BY LastModifiedDate DESC LIMIT 2000
     response:
       rows_path:
         - records
