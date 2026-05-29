@@ -18,8 +18,9 @@ inputs:
 
       To connect interactively, choose "Connect with Google" and provide a
       Google OAuth client ID and client secret when prompted. Access tokens
-      expire; rerun `coral source add --interactive google_sheets` when the
-      stored token needs to be replaced.
+      expire; re-add the source with
+      `coral source add --interactive --file sources/community/google_sheets/manifest.yaml`
+      when the stored token needs to be replaced.
 
       To paste a token manually instead, obtain one from your own OAuth flow
       with the same read-only Sheets scope.
@@ -33,9 +34,9 @@ inputs:
               type: authorization_code
               pkce: required
             redirect_uri: http://127.0.0.1/oauth/callback
-            redirect_uri_port: random
+            redirect_uri_port_mode: random
             endpoints:
-              authorization_url: https://accounts.google.com/o/oauth2/v2/auth
+              authorization_url: https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&prompt=consent
               token_url: https://oauth2.googleapis.com/token
             client:
               id:
@@ -249,17 +250,14 @@ tables:
             - gridProperties
             - columnCount
       - name: hidden
-        type: Utf8
+        type: Boolean
         nullable: true
-        description: String true when the sheet tab is hidden.
+        description: True when the sheet tab is hidden; null or false when visible.
         expr:
-          kind: if_present
-          check:
-            kind: path
-            path:
-              - properties
-              - hidden
-          then_value: "true"
+          kind: path
+          path:
+            - properties
+            - hidden
 
   - name: named_ranges
     description: >-
@@ -360,9 +358,9 @@ functions:
     description: >-
       Fetch cell values for a range within a spreadsheet. Returns one row per
       spreadsheet row in the range. Each `row_data` column is a JSON array of
-      FORMATTED_VALUE strings — use DataFusion `json_array_get(row_data, 0)`
-      to extract individual cells by zero-based column index. Specify the range
-      in A1 notation such as `Sheet1!A1:D10` or a named range.
+      FORMATTED_VALUE strings — use `json_get_str(row_data, 0)` to extract
+      individual cells by zero-based column index. Specify the range in A1
+      notation such as `Sheet1!A1:D10` or a named range.
     args:
       - name: spreadsheet_id
         required: true
@@ -393,7 +391,7 @@ functions:
         nullable: true
         description: >-
           JSON array of cell strings for this row in FORMATTED_VALUE form.
-          Extract individual cells with json_array_get(row_data, 0),
-          json_array_get(row_data, 1), and so on by column index.
+          Extract individual cells with json_get_str(row_data, 0),
+          json_get_str(row_data, 1), and so on by column index.
         expr:
           kind: current_row

@@ -33,13 +33,12 @@ Requires a Google OAuth client ID and client secret with the
 3. Run the interactive setup:
 
 ```bash
-coral source add --interactive google_sheets \
-  --file sources/community/google_sheets/manifest.yaml
+coral source add --interactive --file sources/community/google_sheets/manifest.yaml
 ```
 
 Choose **Connect with Google**, then paste your `GOOGLE_OAUTH_CLIENT_ID` and
 `GOOGLE_OAUTH_CLIENT_SECRET` when prompted. Coral completes the PKCE OAuth
-flow locally and stores the access token.
+flow locally and stores the token.
 
 To paste an access token directly instead:
 
@@ -99,9 +98,9 @@ Extract individual cells by column index:
 
 ```sql
 SELECT
-  json_array_get(row_data, 0) AS col_a,
-  json_array_get(row_data, 1) AS col_b,
-  json_array_get(row_data, 2) AS col_c
+  json_get_str(row_data, 0) AS col_a,
+  json_get_str(row_data, 1) AS col_b,
+  json_get_str(row_data, 2) AS col_c
 FROM google_sheets.get_values('1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms', 'Sheet1!A2:C20')
 LIMIT 20;
 ```
@@ -130,52 +129,99 @@ WHERE nr.spreadsheet_id = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms';
 
 ```sql
 SELECT
-  json_array_get(rv.row_data, 0) AS engineer_name,
-  json_array_get(rv.row_data, 1) AS team,
+  json_get_str(rv.row_data, 0) AS engineer_name,
+  json_get_str(rv.row_data, 1) AS team,
   COUNT(li.id) AS open_issues
 FROM google_sheets.get_values('SPREADSHEET_ID', 'Roster!A2:B50') rv
-JOIN linear.issues li ON LOWER(json_array_get(rv.row_data, 0)) = LOWER(li.assignee_name)
+JOIN linear.issues li ON LOWER(json_get_str(rv.row_data, 0)) = LOWER(li.assignee_name)
 WHERE li.state_type != 'completed'
 GROUP BY 1, 2
 ORDER BY open_issues DESC
 LIMIT 20;
 ```
 
-### Match spreadsheet project list against GitHub repositories
+### Match a spreadsheet task list against open GitHub pull requests
+
+`github.pulls` requires constant `owner` and `repo` filters, so scope it to a
+single repo and join on the PR title against a spreadsheet column:
 
 ```sql
 SELECT
-  json_array_get(rv.row_data, 0) AS project_name,
-  json_array_get(rv.row_data, 1) AS owner,
-  COUNT(pr.id) AS open_prs
-FROM google_sheets.get_values('SPREADSHEET_ID', 'Projects!A2:B30') rv
-LEFT JOIN github.pull_requests pr
-  ON LOWER(pr.repo) = LOWER(json_array_get(rv.row_data, 0))
+  json_get_str(rv.row_data, 0) AS task_name,
+  pr.title AS matching_pr,
+  pr.state
+FROM google_sheets.get_values('SPREADSHEET_ID', 'Tasks!A2:A30') rv
+JOIN github.pulls pr
+  ON LOWER(pr.title) LIKE '%' || LOWER(json_get_str(rv.row_data, 0)) || '%'
+WHERE pr.owner = 'your-org'
+  AND pr.repo = 'your-repo'
   AND pr.state = 'open'
-GROUP BY 1, 2
-ORDER BY open_prs DESC
+ORDER BY task_name
 LIMIT 20;
 ```
 
 ## Validation
 
 ```bash
-# YAML style
+# YAML style check
 make lint-sources
 
-# Manifest structure smoke check
-coral source lint sources/community/google_sheets/manifest.yaml
+# Add interactively (output sanitized — real IDs and token redacted)
+coral source add --interactive --file sources/community/google_sheets/manifest.yaml
+# coral source test google_sheets produces the same output
+```
 
-# Add and test
-coral source add --file sources/community/google_sheets/manifest.yaml
-coral source test google_sheets
+```text
+  ✓ google_sheets connected successfully
+  Secrets: keyring
+
+    google_sheets (3 tables, 1 function)
+    ├─ named_ranges
+    ├─ sheets
+    ├─ spreadsheet_info
+    └─ get_values (function)
+
+    Query tests
+    2 declared · 2 passed · 0 failed
+```
+
+```bash
+# List the tabs in a spreadsheet (output sanitized)
+coral sql "SELECT sheet_id, title, index, row_count, column_count FROM google_sheets.sheets WHERE spreadsheet_id = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms' ORDER BY index"
+```
+
+```text
++----------+-----------+-------+-----------+--------------+
+| sheet_id | title     | index | row_count | column_count |
++----------+-----------+-------+-----------+--------------+
+| 0        | Roster    | 0     | 1000      | 26           |
+| 1845...  | Projects  | 1     | 500       | 12           |
+| 9920...  | Budget    | 2     | 200       | 8            |
++----------+-----------+-------+-----------+--------------+
+3 rows
+```
+
+```bash
+# Fetch cell values from a range (output sanitized)
+coral sql "SELECT json_get_str(row_data, 0) AS name, json_get_str(row_data, 1) AS team FROM google_sheets.get_values('1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms', 'Roster!A2:B4')"
+```
+
+```text
++----------------+-------------+
+| name           | team        |
++----------------+-------------+
+| Ada Lovelace   | Platform    |
+| Alan Turing    | Security    |
+| Grace Hopper   | Compiler    |
++----------------+-------------+
+3 rows
 ```
 
 ## Limitations
 
 - **Read-only** — this source exposes read-only Sheets API endpoints only.
 - **Cell values as JSON arrays** — `get_values` returns each row as a JSON
-  array of strings; individual cells require `json_array_get(row_data, N)`.
+  array of strings; individual cells require `json_get_str(row_data, N)`.
 - **No formula expressions** — `valueRenderOption: FORMATTED_VALUE` returns
   displayed strings, not underlying formulas.
 - **No batch ranges** — `get_values` fetches one range per call.
