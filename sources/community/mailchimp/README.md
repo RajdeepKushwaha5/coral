@@ -35,14 +35,26 @@ coral source add --file sources/community/mailchimp/manifest.yaml
 
 Or pass them interactively when prompted.
 
+### Permissions
+
+Mailchimp API keys carry the full permissions of the account that created
+them — Mailchimp has no key-level scopes. All four tables (`lists`,
+`campaigns`, `members`, `reports`) are accessible on every paid Mailchimp
+plan. A 403 response means the account's plan or user role does not allow
+access to that endpoint, not that the key is invalid. Check your plan level
+and user permissions at **Account > Settings > Users**. See the
+[API fundamentals](https://mailchimp.com/developer/marketing/docs/fundamentals/#connecting-to-the-api)
+and [error reference](https://mailchimp.com/developer/marketing/docs/errors/)
+for details.
+
 ## Tables
 
-| Table | Required filters | Description |
-| --- | --- | --- |
-| `lists` | none | All audiences with subscriber counts and engagement averages |
-| `campaigns` | none (optional `status`, `list_id`) | Campaigns with status, subject, send time, and summary stats |
-| `members` | `list_id` | Subscribers in an audience with email, status, and signup times |
-| `reports` | none | Per-campaign performance: opens, clicks, bounces, unsubscribes |
+| Table | Required filters | Optional filters | Description |
+| --- | --- | --- | --- |
+| `lists` | none | — | All audiences with subscriber counts and engagement averages |
+| `campaigns` | none | `status`, `list_id`, `since_send_time`, `before_send_time`, `sort_field`, `sort_dir` | Campaigns with status, subject, send time, and summary stats |
+| `members` | `list_id` | `status` | Subscribers in an audience with email, status, and signup times |
+| `reports` | none | `since_send_time`, `before_send_time`, `sort_field`, `sort_dir` | Per-campaign performance: opens, clicks, bounces, unsubscribes |
 
 ## Example queries
 
@@ -55,13 +67,17 @@ ORDER BY subscriber_count DESC
 LIMIT 20;
 ```
 
-### Sent campaigns with performance summary
+### Most recent sent campaigns
+
+Use `sort_field` and `sort_dir` to push the sort to the Mailchimp API so
+`LIMIT` returns the globally most-recent rows, not just the first page.
 
 ```sql
 SELECT id, subject_line, emails_sent, open_rate, click_rate, send_time
 FROM mailchimp.campaigns
 WHERE status = 'sent'
-ORDER BY send_time DESC
+  AND sort_field = 'send_time'
+  AND sort_dir = 'DESC'
 LIMIT 25;
 ```
 
@@ -76,12 +92,16 @@ ORDER BY timestamp_signup DESC
 LIMIT 50;
 ```
 
-### Top campaigns by open rate
+### Top campaigns by open rate in a time window
+
+Use `since_send_time` to bound the result set so `ORDER BY open_rate DESC`
+ranks across all campaigns in that window, not just the fetched page.
 
 ```sql
 SELECT campaign_title, emails_sent, open_rate, click_rate,
-       hard_bounces, unsubscribed
+       hard_bounces, unsubscribed, send_time
 FROM mailchimp.reports
+WHERE since_send_time = '2025-01-01T00:00:00Z'
 ORDER BY open_rate DESC
 LIMIT 20;
 ```
@@ -94,6 +114,8 @@ SELECT c.subject_line, c.send_time, r.open_rate, r.click_rate,
 FROM mailchimp.campaigns c
 JOIN mailchimp.reports r ON c.id = r.id
 WHERE c.status = 'sent'
+  AND c.since_send_time = '2025-01-01T00:00:00Z'
+  AND r.since_send_time = '2025-01-01T00:00:00Z'
 ORDER BY r.open_rate DESC
 LIMIT 20;
 ```
@@ -126,15 +148,65 @@ LIMIT 50;
 ## Validation
 
 ```bash
-# YAML style
+# YAML style check
 make lint-sources
 
-# Manifest structure smoke check
-coral source lint sources/community/mailchimp/manifest.yaml
-
-# Add and test
+# Add the source (output sanitized — real IDs and key redacted)
 coral source add --file sources/community/mailchimp/manifest.yaml
+```
+
+```
+  ✓ mailchimp connected successfully
+  Secrets: keyring
+
+    mailchimp (4 tables)
+    ├─ campaigns
+    ├─ lists
+    ├─ members
+    └─ reports
+
+    Query tests
+    1 declared · 1 passed · 0 failed
+
+    ✓ SELECT id, name FROM mailchimp.lists LIMIT 1
+      1 row
+```
+
+```bash
+# Run the built-in test query against the live account
 coral source test mailchimp
+```
+
+```
+  ✓ mailchimp connected successfully
+  Secrets: keyring
+
+    mailchimp (4 tables)
+    ├─ campaigns
+    ├─ lists
+    ├─ members
+    └─ reports
+
+    Query tests
+    1 declared · 1 passed · 0 failed
+
+    ✓ SELECT id, name FROM mailchimp.lists LIMIT 1
+      1 row
+```
+
+```bash
+# Representative query — list all audiences (output sanitized)
+coral sql "SELECT id, name, subscriber_count, open_rate FROM mailchimp.lists LIMIT 3"
+```
+
+```
++------------------+---------------------+------------------+-----------+
+| id               | name                | subscriber_count | open_rate |
++------------------+---------------------+------------------+-----------+
+| a1b2c3d4e5f67890 | Main Newsletter     | 4821             | 28.407    |
+| b2c3d4e5f6789012 | Product Updates     | 1203             | 34.118    |
+| c3d4e5f678901234 | Customer Onboarding | 892              | 41.729    |
++------------------+---------------------+------------------+-----------+
 ```
 
 ## Limitations

@@ -20,6 +20,10 @@ inputs:
     hint: |
       Your Mailchimp API key. Generate one at:
       Account > Extras > API Keys > Create A Key.
+      API keys carry the full permissions of the account that created them —
+      Mailchimp has no key-level scopes. The key must belong to a user whose
+      plan allows reading lists, campaigns, members, and reports. A 403
+      response indicates a plan or user-level restriction, not a bad key.
 
 auth:
   type: BasicAuth
@@ -102,7 +106,9 @@ tables:
       - name: open_rate
         type: Float64
         nullable: true
-        description: Average open rate across all campaigns sent to this audience (0-1).
+        description: >-
+          Average open rate across all campaigns sent to this audience
+          (percentage, 0-100; Mailchimp list stats use a 0-100 scale, not 0-1).
         expr:
           kind: path
           path:
@@ -111,7 +117,9 @@ tables:
       - name: click_rate
         type: Float64
         nullable: true
-        description: Average click rate across all campaigns sent to this audience (0-1).
+        description: >-
+          Average click rate across all campaigns sent to this audience
+          (percentage, 0-100; Mailchimp list stats use a 0-100 scale, not 0-1).
         expr:
           kind: path
           path:
@@ -160,6 +168,11 @@ tables:
       Use the status filter to scope to sent, sending, scheduled, or draft
       campaigns: save (draft), paused, schedule, sending, sent.
       Use the list_id filter to scope to a specific audience.
+      Use since_send_time and before_send_time (ISO 8601,
+      e.g. 2025-01-01T00:00:00Z) to push a time window to the server so
+      that ORDER BY on the result is meaningful across all matching rows.
+      Use sort_field (create_time or send_time) with sort_dir (ASC or DESC)
+      to have Mailchimp sort before Coral applies LIMIT.
       Join id with mailchimp.reports for full per-campaign performance stats.
       report_summary columns are null for campaigns that have not been sent.
     fetch_limit_default: 100
@@ -167,6 +180,14 @@ tables:
       - name: status
         required: false
       - name: list_id
+        required: false
+      - name: since_send_time
+        required: false
+      - name: before_send_time
+        required: false
+      - name: sort_field
+        required: false
+      - name: sort_dir
         required: false
     request:
       method: GET
@@ -178,6 +199,18 @@ tables:
         - name: list_id
           from: filter
           key: list_id
+        - name: since_send_time
+          from: filter
+          key: since_send_time
+        - name: before_send_time
+          from: filter
+          key: before_send_time
+        - name: sort_field
+          from: filter
+          key: sort_field
+        - name: sort_dir
+          from: filter
+          key: sort_dir
     response:
       rows_path:
         - campaigns
@@ -463,10 +496,37 @@ tables:
       Join id with mailchimp.campaigns on id to combine scheduling metadata
       with performance stats. Use open_rate and click_rate to rank campaigns.
       Bounces and abuse_reports help identify list health issues.
+      Use since_send_time and before_send_time (ISO 8601,
+      e.g. 2025-01-01T00:00:00Z) to push a time window to the server so
+      that ORDER BY on the result is meaningful across all matching rows.
+      Use sort_field (campaign_title or send_time) with sort_dir (ASC or DESC)
+      to have Mailchimp sort before Coral applies LIMIT.
     fetch_limit_default: 100
+    filters:
+      - name: since_send_time
+        required: false
+      - name: before_send_time
+        required: false
+      - name: sort_field
+        required: false
+      - name: sort_dir
+        required: false
     request:
       method: GET
       path: /3.0/reports
+      query:
+        - name: since_send_time
+          from: filter
+          key: since_send_time
+        - name: before_send_time
+          from: filter
+          key: before_send_time
+        - name: sort_field
+          from: filter
+          key: sort_field
+        - name: sort_dir
+          from: filter
+          key: sort_dir
     response:
       rows_path:
         - reports
