@@ -6,14 +6,14 @@ description: >-
   Query Squadcast incidents, services, and users via the Squadcast API v3.
   Join with GitHub PRs, Sentry errors, PagerDuty incidents, and Linear issues
   for cross-source SRE and incident management intelligence.
-base_url: https://api.squadcast.com
+base_url: "{{input.SQUADCAST_API_BASE_URL}}"
 
 inputs:
   SQUADCAST_TOKEN:
     kind: secret
     hint: |
       A Squadcast access token. Obtain one from the Squadcast web app under
-      Profile → Access Tokens, or exchange a refresh token for an access token
+      Profile -> Access Tokens, or exchange a refresh token for an access token
       via the Squadcast auth endpoint.
 
       To exchange a refresh token:
@@ -21,19 +21,23 @@ inputs:
           -H "X-Refresh-Token: <your-refresh-token>"
 
       The returned access_token value is what you set here. Tokens expire
-      after 1 hour; re-run `coral source add --interactive squadcast` to
-      refresh.
-
-      For EU deployments change SQUADCAST_REGION to eu.
+      after 1 hour; re-run `coral source add --file sources/community/squadcast/manifest.yaml`
+      to refresh.
 
       See https://apidocs.squadcast.com/
-  SQUADCAST_REGION:
+  SQUADCAST_API_BASE_URL:
     kind: variable
-    default: us
+    default: https://api.squadcast.com
     hint: |
-      Region for your Squadcast account. Use `us` for the default US region
-      or `eu` for the EU region. This controls the base URL used for all
-      API calls.
+      Base URL for the Squadcast API. Defaults to the US region
+      (https://api.squadcast.com). For EU accounts use
+      https://api.eu.squadcast.com.
+  SQUADCAST_OWNER_ID:
+    kind: variable
+    hint: |
+      Your Squadcast account owner ID. Find it in the Squadcast web app under
+      Settings -> General Settings -> Organization ID. Required for querying
+      incidents and services.
 
 auth:
   type: HeaderAuth
@@ -53,52 +57,54 @@ rate_limit:
   retry_after_header: Retry-After
 
 test_queries:
-  - SELECT id, title, status, severity FROM squadcast.incidents LIMIT 5
-  - SELECT id, name, escalation_policy FROM squadcast.services LIMIT 5
+  - SELECT id, name FROM squadcast.services LIMIT 1
 
 tables:
   - name: incidents
     description: >-
-      Lists Squadcast incidents. Returns incident ID, title, description,
-      status, severity, service, assignee, triggered and resolved timestamps,
-      and the source that triggered the alert.
+      Exports Squadcast incidents for a given time window via the incidents
+      export endpoint. Returns incident ID, title, description, status,
+      severity, service, assignee, triggered and resolved timestamps, and
+      the alert source that triggered each incident.
     guide: |
-      Use `status` to filter by incident state: triggered, acknowledged,
-      resolved, or suppressed. Join `service_id` with `squadcast.services`
-      and `assignee_id` with `squadcast.users`. Join `triggered_at` with
-      GitHub deploy `created_at` or Sentry `first_seen` to correlate incidents
-      with deploys and errors.
-    fetch_limit_default: 20
+      Requires start_time, end_time (ISO 8601, e.g. 2025-01-01T00:00:00Z),
+      and the SQUADCAST_OWNER_ID input set at source-add time. Use the
+      status filter to scope to triggered, acknowledged, resolved, or
+      suppressed incidents. Join service_id with squadcast.services and
+      email with squadcast.users. Join triggered_at with GitHub deploy
+      created_at or Sentry first_seen to correlate incidents with code
+      changes and errors.
     filters:
+      - name: start_time
+        required: true
+      - name: end_time
+        required: true
       - name: status
-        required: false
-      - name: service_id
         required: false
     request:
       method: GET
-      path: /v3/incidents
+      path: /v3/incidents/export
       query:
+        - name: owner_id
+          from: input
+          key: SQUADCAST_OWNER_ID
+        - name: start_time
+          from: filter
+          key: start_time
+        - name: end_time
+          from: filter
+          key: end_time
+        - name: type
+          from: literal
+          value: json
         - name: status
           from: filter
           key: status
-        - name: serviceId
-          from: filter
-          key: service_id
     response:
       rows_path:
         - data
-        - incidents
     pagination:
-      mode: cursor_query
-      cursor_param: pageToken
-      response_cursor_path:
-        - data
-        - meta
-        - next_page_token
-      page_size:
-        default: 20
-        max: 100
-        query_param: pageSize
+      mode: none
     columns:
       - name: id
         type: Utf8
@@ -171,7 +177,7 @@ tables:
       - name: assignee_name
         type: Utf8
         nullable: true
-        description: Name of the user currently assigned to this incident.
+        description: Display name of the user currently assigned to this incident.
         expr:
           kind: path
           path:
@@ -219,19 +225,23 @@ tables:
 
   - name: services
     description: >-
-      Lists all Squadcast services. Returns service ID, name, description,
-      escalation policy, and on-call information.
+      Lists all Squadcast services for the account. Returns service ID, name,
+      description, escalation policy, on-call users, and status.
     guide: |
-      Use `id` to join with `service_id` on `squadcast.incidents` to group
-      incidents by service. Join `name` with GitHub repository names or Sentry
-      project slugs for cross-source service identity.
+      Use id to join with service_id on squadcast.incidents to group incidents
+      by service. Join name with GitHub repository names or Sentry project slugs
+      for cross-source service identity. Requires SQUADCAST_OWNER_ID set at
+      source-add time.
     request:
       method: GET
       path: /v3/services
+      query:
+        - name: owner_id
+          from: input
+          key: SQUADCAST_OWNER_ID
     response:
       rows_path:
         - data
-        - services
     pagination:
       mode: none
     columns:
@@ -279,7 +289,7 @@ tables:
       - name: status
         type: Utf8
         nullable: true
-        description: Service health status (active, or similar).
+        description: Service health status.
         expr:
           kind: path
           path:
@@ -293,19 +303,19 @@ tables:
 
   - name: users
     description: >-
-      Lists all users in the Squadcast account. Returns user ID, name, email,
-      role, and on-call status.
+      Lists all users in the Squadcast account. Returns user ID, first and last
+      name, display username, email address, and account role.
     guide: |
-      Use `email` to join with GitHub PR authors, Linear assignees, and
+      Use email to join with GitHub PR authors, Linear assignees, and
       PagerDuty users for cross-source engineer identity resolution. Join
-      `id` with `assignee_id` on `squadcast.incidents`.
+      id with assignee_id on squadcast.incidents. username_for_display is
+      the display name used in Squadcast notifications and the UI.
     request:
       method: GET
       path: /v3/users
     response:
       rows_path:
         - data
-        - users
     pagination:
       mode: none
     columns:
@@ -317,18 +327,34 @@ tables:
           kind: path
           path:
             - id
-      - name: name
+      - name: first_name
         type: Utf8
         nullable: true
-        description: User display name.
+        description: User first name.
         expr:
           kind: path
           path:
-            - name
+            - first_name
+      - name: last_name
+        type: Utf8
+        nullable: true
+        description: User last name.
+        expr:
+          kind: path
+          path:
+            - last_name
+      - name: username_for_display
+        type: Utf8
+        nullable: true
+        description: Display username shown in Squadcast notifications and the UI.
+        expr:
+          kind: path
+          path:
+            - username_for_display
       - name: email
         type: Utf8
         nullable: true
-        description: User email address; join key with GitHub, Linear, and PagerDuty.
+        description: User email address; primary join key with GitHub, Linear, and PagerDuty.
         expr:
           kind: path
           path:
