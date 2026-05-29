@@ -20,7 +20,7 @@ coral source add --file sources/community/dynatrace/manifest.yaml
 Requires a Dynatrace API token with read scopes for the resources you plan to
 query.
 
-1. In Dynatrace, go to **Access Tokens → Generate new token**.
+1. In Dynatrace, go to **Access Tokens -> Generate new token**.
 2. Enable the following scopes:
    - `problems.read`
    - `entities.read`
@@ -33,16 +33,62 @@ export DYNATRACE_API_TOKEN=dt0s01.ST2EY72KQINMH5...
 coral source add --file sources/community/dynatrace/manifest.yaml
 ```
 
-For managed (on-premise) environments use the form
-`https://your-host/e/your-environment-id` as the base URL.
+For managed (on-premise) environments use `https://your-host/e/your-environment-id`.
 
 ## Tables
 
-| Table | Description |
-| --- | --- |
-| `problems` | Detected problems from the last two weeks (status, severity, impact) |
-| `entities` | Monitored entities: services, hosts, applications, processes |
-| `releases` | Software releases tracked by Dynatrace with problem and vulnerability counts |
+| Table | Required filters | Description |
+| --- | --- | --- |
+| `problems` | none | Problems from the last two weeks (up to 50 per query) |
+| `entities` | `entity_selector` | Monitored entities scoped by Dynatrace entity selector syntax |
+| `releases` | none | Software releases from the last two weeks (up to 200 per query) |
+
+Multi-page cursor pagination is not enabled on any table. Dynatrace requires
+`nextPageKey` follow-up requests to omit all other query params, which Coral's
+cursor pagination does not do. Each query returns the first page only.
+
+## Validation
+
+```bash
+# Add the source and run test queries (output sanitized)
+coral source add --file sources/community/dynatrace/manifest.yaml
+# coral source test dynatrace produces the same output
+```
+
+```text
+  ✓ dynatrace connected successfully
+  Secrets: keyring
+
+    dynatrace (3 tables)
+    ├─ entities
+    ├─ problems
+    └─ releases
+
+    Query tests
+    2 declared · 2 passed · 0 failed
+
+    ✓ SELECT problem_id, title, status, severity_level FROM dynatrace.problems LIMIT 1
+      1 row
+
+    ✓ SELECT entity_id, display_name, type FROM dynatrace.entities WHERE entity_selector = 'type(SERVICE)' LIMIT 1
+      1 row
+```
+
+```bash
+# Representative query (output sanitized)
+coral sql "SELECT problem_id, title, status, severity_level FROM dynatrace.problems WHERE status = 'OPEN' LIMIT 3"
+```
+
+```text
++------------------+------------------------------------+--------+------------------+
+| problem_id       | title                              | status | severity_level   |
++------------------+------------------------------------+--------+------------------+
+| P-12345678       | High response time on /api/orders  | OPEN   | PERFORMANCE      |
+| P-87654321       | Error rate spike in payment-svc    | OPEN   | ERROR            |
+| P-11223344       | Host CPU saturation                | OPEN   | RESOURCE_CONT... |
++------------------+------------------------------------+--------+------------------+
+3 rows
+```
 
 ## Example queries
 
@@ -65,6 +111,15 @@ WHERE entity_selector = 'type(SERVICE)'
 LIMIT 50;
 ```
 
+### All monitored hosts
+
+```sql
+SELECT entity_id, display_name, first_seen_ms, last_seen_ms
+FROM dynatrace.entities
+WHERE entity_selector = 'type(HOST)'
+LIMIT 50;
+```
+
 ### Releases with active problems
 
 ```sql
@@ -72,6 +127,21 @@ SELECT name, version, product, stage, problem_count, vulnerability_count
 FROM dynatrace.releases
 WHERE affected_by_problems = true
 ORDER BY problem_count DESC
+LIMIT 20;
+```
+
+### Problem duration for resolved problems
+
+`end_time_ms` is -1 for open problems (not null). Use `NULLIF` when
+computing durations:
+
+```sql
+SELECT problem_id, title, start_time_ms,
+       NULLIF(end_time_ms, -1) AS end_time_ms,
+       (NULLIF(end_time_ms, -1) - start_time_ms) / 60000 AS duration_min
+FROM dynatrace.problems
+WHERE status = 'RESOLVED'
+ORDER BY start_time_ms DESC
 LIMIT 20;
 ```
 
@@ -87,20 +157,26 @@ SELECT dt.title AS dynatrace_problem,
 FROM dynatrace.problems dt
 JOIN sentry.issues se
   ON se.first_seen >= TO_TIMESTAMP(dt.start_time_ms / 1000)
-  AND se.first_seen <= TO_TIMESTAMP(COALESCE(dt.end_time_ms, dt.start_time_ms + 3600000) / 1000)
+  AND se.first_seen <= TO_TIMESTAMP(
+        COALESCE(NULLIF(dt.end_time_ms, -1), dt.start_time_ms + 3600000) / 1000
+      )
 WHERE dt.status = 'OPEN'
 LIMIT 20;
 ```
 
-### GitHub deployments that opened Dynatrace problems within one hour
+### GitHub deploys that opened Dynatrace problems within one hour
+
+`github.repo_deployments` requires `owner` and `repo` filters:
 
 ```sql
 SELECT d.environment, d.created_at AS deploy_time,
        dt.title AS problem_title, dt.severity_level
-FROM github.deployments d
+FROM github.repo_deployments d
 JOIN dynatrace.problems dt
   ON dt.start_time_ms >= CAST(EXTRACT(EPOCH FROM CAST(d.created_at AS TIMESTAMP)) * 1000 AS BIGINT)
   AND dt.start_time_ms <= CAST(EXTRACT(EPOCH FROM CAST(d.created_at AS TIMESTAMP)) * 1000 AS BIGINT) + 3600000
+WHERE d.owner = 'myorg'
+  AND d.repo = 'myapp'
 ORDER BY d.created_at DESC
 LIMIT 20;
 ```
@@ -117,26 +193,23 @@ ORDER BY dr.problem_count DESC
 LIMIT 20;
 ```
 
-## Validation
-
-```bash
-make lint-sources
-coral source lint sources/community/dynatrace/manifest.yaml
-coral source add --file sources/community/dynatrace/manifest.yaml
-coral source test dynatrace
-```
-
 ## Limitations
 
-- **Two-week default window** — problems and releases default to `now-2w`;
-  extend with the `from` query parameter if needed.
+- **First page only** — multi-page cursor pagination is not enabled because
+  Dynatrace requires `nextPageKey` follow-up requests to omit all other query
+  params. Problems return up to 50 rows; entities and releases return up to 200
+  rows per query.
+- **Two-week window for problems** — the manifest explicitly sends `from=now-2w`
+  (Dynatrace API default is `now-2h`). Releases default to `now-2w`.
+- **end_time_ms = -1 for open problems** — Dynatrace returns -1, not null.
+  Use `NULLIF(end_time_ms, -1)` when computing durations or filtering closed
+  problems.
+- **entity_selector is required** — Dynatrace requires `entitySelector` with a
+  `type(...)` or `entityId(...)` criterion on the first page; omitting it
+  returns an API error.
 - **Millisecond timestamps** — `start_time_ms`, `end_time_ms`, `first_seen_ms`,
   and `last_seen_ms` are Unix epoch milliseconds; use `TO_TIMESTAMP(x / 1000)`
-  to convert for SQL timestamp comparisons.
-- **Entity selector syntax** — the `entity_selector` filter on `entities` uses
-  Dynatrace entity selector syntax, not SQL; invalid selectors return API errors.
-- **Cursor reuse** — when paginating, Dynatrace encodes filters into the cursor;
-  Coral passes `nextPageKey` only on subsequent pages as required.
+  for SQL timestamp comparisons.
 - Community sources are maintained separately from bundled core sources.
 
 ## Contributing

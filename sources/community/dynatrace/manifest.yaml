@@ -44,41 +44,43 @@ rate_limit:
   retry_after_header: Retry-After
 
 test_queries:
-  - SELECT problem_id, title, status, severity_level FROM dynatrace.problems LIMIT 5
-  - SELECT entity_id, display_name, type FROM dynatrace.entities LIMIT 5
+  - SELECT problem_id, title, status, severity_level FROM dynatrace.problems LIMIT 1
+  - SELECT entity_id, display_name, type FROM dynatrace.entities WHERE entity_selector = 'type(SERVICE)' LIMIT 1
 
 tables:
   - name: problems
     description: >-
-      Lists Dynatrace problems (detected incidents) from the last two weeks.
-      Returns problem ID, display ID, title, status, severity level, impact
-      level, affected entity count, and start and end times.
+      Lists Dynatrace problems (detected incidents) from the last two weeks
+      (explicit from=now-2w; Dynatrace API default is now-2h). Returns problem
+      ID, display ID, title, status, severity level, impact level, affected
+      entities array, and start and end times.
     guide: |
-      Problems are Dynatrace's automatically detected incidents. Join
-      `start_time_ms` with GitHub deploy `created_at` to correlate deploys with
-      newly opened problems. Use `status = 'OPEN'` to surface active problems.
+      Problems are Dynatrace's automatically detected incidents. Use
+      status = 'OPEN' to surface active problems. endTime = -1 (not null)
+      for open problems; use NULLIF(end_time_ms, -1) when computing durations.
+      Join start_time_ms with GitHub deploy timestamps to correlate deploys
+      with newly opened problems.
       Severity levels: AVAILABILITY, ERROR, PERFORMANCE, RESOURCE_CONTENTION,
       CUSTOM_ALERT, INFO. Impact levels: APPLICATION, SERVICES, INFRASTRUCTURE.
+      Multi-page cursor pagination is not enabled because Dynatrace requires
+      follow-up nextPageKey requests to omit all other query params; this
+      source returns the first page only (up to 50 problems).
     fetch_limit_default: 50
     request:
       method: GET
       path: /api/v2/problems
       query:
-        - name: fields
+        - name: from
           from: literal
-          value: +affectedEntities,+managementZones
+          value: now-2w
+        - name: pageSize
+          from: literal
+          value: "50"
     response:
       rows_path:
         - problems
     pagination:
-      mode: cursor_query
-      cursor_param: nextPageKey
-      response_cursor_path:
-        - nextPageKey
-      page_size:
-        default: 50
-        max: 500
-        query_param: pageSize
+      mode: none
     columns:
       - name: problem_id
         type: Utf8
@@ -130,10 +132,10 @@ tables:
           kind: path
           path:
             - impactLevel
-      - name: affected_entity_count
-        type: Int64
+      - name: affected_entities
+        type: Json
         nullable: true
-        description: Number of entities affected by this problem.
+        description: Array of affected entity stubs (each with entityId.id, entityId.type, and name).
         expr:
           kind: path
           path:
@@ -149,7 +151,9 @@ tables:
       - name: end_time_ms
         type: Int64
         nullable: true
-        description: Problem end time as Unix epoch milliseconds; null when the problem is still open.
+        description: >-
+          Problem end time as Unix epoch milliseconds. -1 for open problems
+          (not null); use NULLIF(end_time_ms, -1) when computing durations.
         expr:
           kind: path
           path:
@@ -157,12 +161,15 @@ tables:
       - name: root_cause_entity_id
         type: Utf8
         nullable: true
-        description: Entity ID of the root cause; join to `dynatrace.entities` for details.
+        description: >-
+          Entity ID string of the root cause entity; join to
+          dynatrace.entities on entity_id for details.
         expr:
           kind: path
           path:
             - rootCauseEntity
             - entityId
+            - id
       - name: root_cause_entity_name
         type: Utf8
         nullable: true
@@ -175,27 +182,29 @@ tables:
       - name: raw
         type: Json
         nullable: true
-        description: Raw problem object including affected entities and management zones.
+        description: Raw problem object.
         expr:
           kind: current_row
 
   - name: entities
     description: >-
       Lists monitored entities (services, hosts, applications, processes) from
-      Dynatrace. Returns entity ID, display name, type, first and last seen
-      timestamps, and tags. Use the optional `entity_selector` filter to scope
-      results using Dynatrace entity selector syntax.
+      Dynatrace. Requires an entity_selector filter using Dynatrace selector
+      syntax. Returns entity ID, display name, type, first and last seen
+      timestamps, and tags.
     guide: |
-      Entity types include SERVICE, HOST, APPLICATION, PROCESS_GROUP,
-      SYNTHETIC_TEST, and many others. Scope by type using the entity selector
-      syntax: `WHERE entity_selector = 'type(SERVICE)'`. For all hosts:
-      `WHERE entity_selector = 'type(HOST)'`. Join `entity_id` with
-      `root_cause_entity_id` on `dynatrace.problems` to resolve problem sources.
-      Omit the filter to list all entity types.
-    fetch_limit_default: 50
+      Requires entity_selector. Dynatrace requires entitySelector on the
+      first page; omitting it returns an API error.
+      Common selectors: type(SERVICE), type(HOST), type(APPLICATION),
+      type(PROCESS_GROUP). Join entity_id with root_cause_entity_id on
+      dynatrace.problems to resolve problem sources.
+      Multi-page cursor pagination is not enabled because Dynatrace requires
+      follow-up nextPageKey requests to omit all other query params; this
+      source returns the first page only (up to 200 entities per query).
+    fetch_limit_default: 200
     filters:
       - name: entity_selector
-        required: false
+        required: true
     request:
       method: GET
       path: /api/v2/entities
@@ -206,18 +215,14 @@ tables:
         - name: fields
           from: literal
           value: +tags,+properties,+managementZones
+        - name: pageSize
+          from: literal
+          value: "200"
     response:
       rows_path:
         - entities
     pagination:
-      mode: cursor_query
-      cursor_param: nextPageKey
-      response_cursor_path:
-        - nextPageKey
-      page_size:
-        default: 50
-        max: 500
-        query_param: pageSize
+      mode: none
     columns:
       - name: entity_id
         type: Utf8
@@ -280,26 +285,25 @@ tables:
       Returns release name, version, product, stage, running status, problem
       count, and security vulnerability count.
     guide: |
-      Join `version` and `product` with GitHub release tags or deploy
-      environment names to correlate Dynatrace-tracked releases with GitHub
-      deployments or Sentry releases. Use `affected_by_problems = 'true'` to
-      surface releases with active problems.
-    fetch_limit_default: 100
+      Join version and product with GitHub release tags or deploy environment
+      names to correlate Dynatrace-tracked releases with code changes.
+      Use affected_by_problems = true to surface releases with active problems.
+      Multi-page cursor pagination is not enabled because Dynatrace requires
+      follow-up nextPageKey requests to omit all other query params; this
+      source returns the first page only (up to 200 releases).
+    fetch_limit_default: 200
     request:
       method: GET
       path: /api/v2/releases
+      query:
+        - name: pageSize
+          from: literal
+          value: "200"
     response:
       rows_path:
         - releases
     pagination:
-      mode: cursor_query
-      cursor_param: nextPageKey
-      response_cursor_path:
-        - nextPageKey
-      page_size:
-        default: 100
-        max: 1000
-        query_param: pageSize
+      mode: none
     columns:
       - name: release_entity_id
         type: Utf8
@@ -342,7 +346,7 @@ tables:
           path:
             - stage
       - name: running
-        type: Json
+        type: Boolean
         nullable: true
         description: True when this release version is currently running.
         expr:
@@ -350,7 +354,7 @@ tables:
           path:
             - running
       - name: affected_by_problems
-        type: Json
+        type: Boolean
         nullable: true
         description: True when this release has one or more open Dynatrace problems.
         expr:
@@ -366,7 +370,7 @@ tables:
           path:
             - problemCount
       - name: affected_by_vulnerabilities
-        type: Json
+        type: Boolean
         nullable: true
         description: True when this release has open security vulnerabilities.
         expr:
@@ -382,9 +386,9 @@ tables:
           path:
             - securityVulnerabilitiesCount
       - name: throughput
-        type: Json
+        type: Float64
         nullable: true
-        description: Request throughput for this release (numeric, requests per minute).
+        description: Request throughput for this release in requests per minute.
         expr:
           kind: path
           path:
